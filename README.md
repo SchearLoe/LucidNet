@@ -45,6 +45,11 @@ Go（数据面/服务）+ Java 17 / Spring Boot（LucidBGP）+ C（DPDK，M3+）
 | M2 | 检测与取证：秒级 Zone 检测、扫段、攻击详情与导出、10 节点 100w fps 验收 |
 | M3 | 报表中心、Flowspec 处置、多租户、容量预测 |
 
-## License
+## License（双许可）
 
-TBD（正式立项时确定）
+本项目采用 **AGPL-3.0-only + 商业双许可**，版权所有 © SchearLoe：
+
+- **AGPL-3.0（免费）**：可自由使用、修改、部署，但衍生作品与对外提供的服务必须同样按 AGPL-3.0 完整开源（含网络服务，AGPL §13）。
+- **商业许可（付费）**：闭源商用、产品集成、SaaS 托管等无法满足 AGPL 义务的场景，需获得版权人商业授权——通过 [github.com/SchearLoe](https://github.com/SchearLoe) 联系洽谈。
+
+详见 [LICENSE](LICENSE)、[docs/商业授权说明.md](docs/商业授权说明.md) 与 [CONTRIBUTING.md](CONTRIBUTING.md)（贡献即同意双许可条款）。
