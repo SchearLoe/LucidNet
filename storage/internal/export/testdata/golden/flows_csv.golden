@@ -1,0 +1,5 @@
+# LucidNet flow export | zone=客户A(101) | window=2026-10-24T13:05:00+08:00/13:15:00
+# fields=time_second,src_ip,src_port,dst_ip,dst_port,proto,bytes,packets,tcp_flags,in_if,out_if,sample_rate | filters=dst_port=443 zone_id=101
+start,end,proto,src_ip,src_port,dst_ip,dst_port,packets,bytes,tcp_flags,in_if,out_if,sample_rate
+2026-10-24 13:05:01.123,2026-10-24 13:05:03.400,6,2001:db8::1,44321,2001:db8:5::80,443,120,86400,18,12,15,1
+2026-10-24 13:05:01.200,2026-10-24 13:05:01.350,6,::ffff:1.2.3.4,55555,::ffff:5.6.7.8,80,10,6400,2,3,4,100

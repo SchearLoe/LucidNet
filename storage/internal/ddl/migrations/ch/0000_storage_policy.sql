@@ -1,0 +1,41 @@
+-- 0000 —— 存储卷与冷热策略（docs/dd/04 §1.1）
+--
+-- 说明：DISK / STORAGE POLICY 是 ClickHouse 节点级配置（<storage_configuration>），
+-- 无法经 ON CLUSTER DDL 下发。本文件为部署模板；由 lucid-agent / 运维在
+-- 每个 CH 节点 /etc/clickhouse-server/config.d/storage.xml 写入后重启生效
+--（部署顺序见本目录 README.md 第 1 步）。
+--
+-- 容量账（docs/dd/04 §1.1）：热 3 天 ≈ 4–6.6TB/副本 ×2；冷 12 天 ≈ 16–26TB/副本 ×2。
+--
+-- 节点配置模板（每节点同构；路径按盘位调整）：
+--
+--   <clickhouse>
+--     <storage_configuration>
+--       <disks>
+--         <hot>
+--           <type>local</type>
+--           <path>/ch/hot/</path>   <!-- 每节点 2×7.68T NVMe RAID0 -->
+--         </hot>
+--         <cold>
+--           <type>local</type>
+--           <path>/ch/cold/</path>  <!-- 每节点 8×20T HDD RAID0/单盘 -->
+--         </cold>
+--       </disks>
+--       <policies>
+--         <hot_cold>
+--           <volumes>
+--             <hot><disk>hot</disk></hot>
+--             <cold><disk>cold</disk></cold>
+--           </volumes>
+--           <move_factor>0.2</move_factor>          <!-- docs/dd/04 §1.1 -->
+--           <background_move_pool_size>2</background_move_pool_size> <!-- 后台 2 线程 -->
+--         </hot_cold>
+--       </policies>
+--     </storage_configuration>
+--   </clickhouse>
+--
+-- 验证（任一节点）：
+--   SELECT name, path FROM system.disks;
+--   SELECT name, volumes.policy_name FROM system.storage_policies;
+--
+-- 磁盘水位预案（docs/dd/04 §6）：85% → ①降采样 ②热段 TTL 3→2 天 ③告警升级人工。
