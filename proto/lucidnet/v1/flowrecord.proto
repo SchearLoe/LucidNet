@@ -1,0 +1,40 @@
+syntax = "proto3";
+package lucidnet.v1;
+
+option go_package = "github.com/SchearLoe/lucidnet/gen/go/lucidnet/v1;lucidnetv1";
+
+// FlowRecord —— flows.raw 消息体（契约：docs/00 §2.1 / docs/09 §3）
+// 字段只增不改不删；地址一律 16B（IPv4 用 ::ffff:a.b.c.d 映射），ip_version 显式标注。
+message FlowRecord {
+  // —— 时间（流开始/结束，毫秒）
+  int64  time_start_ms = 1;
+  int64  time_end_ms   = 2;
+  // —— 来源
+  string exporter      = 3;   // exporter IP（文本）
+  uint32 device_id     = 4;   // 资产库设备ID（SNMP 对齐，0=未知）
+  uint32 in_if         = 5;   // ifIndex（SNMP 命名空间）
+  uint32 out_if        = 6;
+  // —— 五元组
+  bytes  src_ip = 7;          // 16B
+  bytes  dst_ip = 8;
+  uint32 src_port = 9;
+  uint32 dst_port = 10;
+  uint32 proto    = 11;       // IP 协议号
+  uint32 ip_version = 12;     // 4/6
+  // —— 计量
+  uint64 packets = 13;
+  uint64 bytes   = 14;
+  uint32 tcp_flags = 15;
+  uint32 tos        = 16;
+  uint32 sample_rate = 17;    // 全链路采样率倒数（1=全采）
+  // —— 富化（采集侧完成）
+  uint32 src_as = 20;
+  uint32 dst_as = 21;
+  bytes   bgp_next_hop = 22;
+  uint32  src_geo = 23;
+  uint32  dst_geo = 24;
+  uint32  app_id  = 25;
+  int32   zone_id = 26;       // 客户域，0=未命中；一条记录只标一个客户域
+  uint32  if_role = 27;       // 位图：bit0 in=boundary, bit1 out=boundary（09 §3）
+  uint32  zone_side = 28;     // 0=未命中 1=dst命中 2=src命中；方向推导唯一依据（09 §3）
+}

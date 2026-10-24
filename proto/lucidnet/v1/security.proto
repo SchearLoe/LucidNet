@@ -1,0 +1,58 @@
+syntax = "proto3";
+package lucidnet.v1;
+
+option go_package = "github.com/SchearLoe/lucidnet/gen/go/lucidnet/v1;lucidnetv1";
+
+// 攻击与告警模型（R2/R5/R7/R9；契约：docs/00 §2.3/§2.4，docs/09 §2 alarms topic）
+
+message AttackEvent {
+  string attack_id = 1;       // ULID
+  int32  zone_id = 2;
+  string zone_name = 3;
+  uint32 attack_type = 4;     // AttackType 枚举，见 shared/security.go
+  string target_prefix = 5;
+  int64  start_ms = 6;
+  int64  end_ms = 7;
+  int64  peak_bps = 8;
+  int64  peak_pps = 9;
+  float  confidence = 10;     // 0-1
+  repeated string top_sources = 11;   // ≤100
+  string evidence_json = 12;
+  uint32 status = 13;         // AttackStatus 枚举
+  string mitigation_id = 14;  // LucidBGP 处置关联（R9）
+}
+
+message AttackMinute {        // 分钟级攻击详情（R5）
+  string attack_id = 1;
+  int64  minute_epoch = 2;    // 分钟对齐 epoch
+  int64  bps_in = 3;
+  int64  pps_in = 4;
+  int64  bps_out = 5;
+  int64  pps_out = 6;
+  uint64 new_flows = 7;
+  float  syn_ratio = 8;
+  float  udp_ratio = 9;
+  repeated string top_sources = 10;
+  repeated uint32 top_ports = 11;
+}
+
+message Alarm {
+  string alarm_id = 1;
+  string source = 2;          // analytics|bgp|system
+  uint32 severity = 3;        // 1提示 2警告 3严重
+  uint32 category = 4;        // 攻击/波动/设备/系统
+  int64  raise_ms = 5;
+  int64  clear_ms = 6;
+  string subject = 7;
+  string detail_json = 8;
+  int32  zone_id = 9;
+  string attack_id = 10;
+}
+
+// alarms topic 信封（09 §2）
+message AlarmEnvelope {
+  oneof payload {
+    Alarm alarm = 1;
+    AttackEvent attack = 2;
+  }
+}

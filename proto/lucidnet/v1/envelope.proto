@@ -1,0 +1,57 @@
+syntax = "proto3";
+package lucidnet.v1;
+
+option go_package = "github.com/SchearLoe/lucidnet/gen/go/lucidnet/v1;lucidnetv1";
+
+// Kafka 信封消息（契约：docs/09 §2 —— topic/key/生产者→消费者以 09 为唯一权威）
+
+// flows.aggr.minute（key=exporter）：Analytics → Storage Inserter → CH aggr_minute
+message AggrMinuteBatch {
+  repeated AggrRow rows = 1;
+  uint64 batch_id = 2;        // 幂等：Inserter 侧 + PG export_batches 去重
+}
+
+message AggrRow {
+  int64  minute = 1;          // 分钟对齐 epoch 秒
+  string exporter = 2;
+  uint32 device_id = 3;
+  uint32 in_if = 4;
+  uint32 out_if = 5;
+  uint32 direction = 6;       // 0=unk 1=in 2=out 3=intra（09 §3 zone_side 推导）
+  int32  zone_id = 7;
+  uint32 src_as = 8;
+  uint32 dst_as = 9;
+  uint32 proto = 10;
+  uint32 dst_port = 11;
+  uint32 app_id = 12;
+  uint64 bytes_sum = 13;
+  uint64 packets_sum = 14;
+  uint64 flows_count = 15;
+}
+
+// attacks.minutes（key=attack_id）：Analytics → Storage Inserter → CH attack_minutes
+message AttackMinuteBatch {
+  repeated AttackMinute rows = 1;
+  uint64 batch_id = 2;
+}
+
+// flow.templates（key=exporter+obsDomain，compact，保留7d）：Collector 自恢复 WAL
+message TemplateRecord {
+  string exporter = 1;
+  uint32 obs_domain = 2;
+  uint32 template_id = 3;
+  bytes  body = 4;
+  uint64 version = 5;
+  int64  ts_ms = 6;
+}
+
+// bgp.mitigations：LucidBGP → Analytics FSM / 网关处置轨迹（R9 回执闭环）
+message MitigationEvent {
+  string mitigation_id = 1;
+  string action = 2;          // blackhole|flowspec|withdraw
+  string prefix = 3;
+  int64  expire_at_ms = 4;    // 限时撤销时间，0=长期
+  string result = 5;          // applied|withdrawn|failed
+  string attack_id = 6;
+  int64  ts_ms = 7;
+}

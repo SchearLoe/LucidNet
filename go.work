@@ -1,0 +1,10 @@
+go 1.27
+
+use (
+	./shared
+	./broker
+	./collector
+	./analytics
+	./storage
+	./master
+)

@@ -1,0 +1,24 @@
+syntax = "proto3";
+package lucidnet.v1;
+
+option go_package = "github.com/SchearLoe/lucidnet/gen/go/lucidnet/v1;lucidnetv1";
+
+// Zone（客户域，R2）—— etcd /lucid/zones + PG zones/zone_ips（契约：docs/00 §2.2 / docs/09 §5）
+message ZoneSpec {
+  int32  id = 1;
+  string name = 2;
+  string tenant = 3;
+  repeated IpEntry ips = 4;       // ≤1000 条/客户；重叠由 Master 保存时校验禁止
+  repeated DeviceIf boundary_ifs = 5; // 可选绑定边界接口（R4 辅助）
+  int32  policy_id = 6;           // 检测策略模板
+}
+
+message IpEntry {
+  bytes prefix = 1;               // 16B 地址（v4 用映射表示）
+  int32 mask_len = 2;             // v4:0-32, v6:0-128；单IP=全长度掩码
+}
+
+message DeviceIf {
+  uint32 device_id = 1;
+  uint32 if_index = 2;
+}
