@@ -1,7 +1,8 @@
 # LucidNet 网络流量智能分析平台 — 总体架构规划
 
-> 版本：v0.2｜日期：2026-10-24
+> 版本：v0.2.1｜日期：2026-10-24
 > v0.1 → v0.2：吸收 9 项细化需求（R1–R9，见需求追踪矩阵）；新增 LucidBGP 模块；存储保留期调整为**明细 15 天**并重算容量；文档体系拆分为各模块概要设计 + 详细设计。
+> v0.2 → v0.2.1：§3 架构图重绘（Mermaid），新增"一条流记录的旅程"数据流说明、物理部署视图、分流层论证与部署形态。
 > 定位：基于 NetStream/NetFlow/IPFIX/sFlow、SNMP、BGP/BMP 多源数据，提供**网络流洞察、流量波动分析、秒级攻击检测与处置闭环**的一体化产品。
 > 对标：Genie Networks GenieATM/FLB；参考 Akvorado（开源架构）、Gigamon（报文侧分流）。
 > 性能目标：**10 台服务器集群 ≥100 万 flows/s 持续处理，IPv4/IPv6 双栈**。
@@ -35,43 +36,128 @@
 
 ## 3. 总体架构
 
+### 3.1 逻辑数据流（数据面主链路）
+
+```mermaid
+flowchart TB
+    R["路由器/交换机（exporters）<br/>NetStream · NetFlow v5/v9 · IPFIX · sFlow（UDP）"]
+
+    subgraph B1["① 汇聚分流 LucidBroker（只分发 · 不解析业务）"]
+        FLB["FLB 流负载均衡<br/>按 exporter 一致性哈希"]
+        FWD["Forwarder（R1）<br/>多目的转发 + 再采样"]
+    end
+
+    subgraph B2["② 采集解析 LucidCollector × 4（多节点并行）"]
+        DEC["解码 / 模板管理（GoFlow2）"]
+        ENR["富化：ASN · Geo · 客户域Zone · 接口角色(R4)"]
+        SNMP["SNMP 采集器：接口计数器 / 资产 / 角色识别(R4)"]
+    end
+
+    K[("Kafka 事件总线<br/>flows.raw / bgp.* / snmp.* / alarms")]
+
+    subgraph B3["③ 流式分析 LucidAnalytics × 2"]
+        AGG["分钟聚合矩阵 · TopN · 基线"]
+        DET["Zone 秒级检测引擎(R2/R7)<br/>攻击事件 · 分钟详情(R5)"]
+    end
+
+    subgraph B4["④ 存储"]
+        CH[("ClickHouse<br/>明细 15 天(R6) + 聚合")]
+        RD[("Redis 实时/证据")]
+        VM[("VictoriaMetrics 指标")]
+    end
+
+    UI["⑤ 展示与开放 LucidConsole<br/>流量矩阵 · 攻击中心 · 明细查询(R5/R6) · 报表(R8) · API"]
+    EXT["第三方系统"]
+    BG["⑥ LucidBGP：gobgpd 主备 + 控制台 + RIB Feeder"]
+
+    R ==>|"UDP 原始流"| FLB
+    FLB ==>|"哈希分发到某台采集节点"| DEC
+    FLB -.->|"命中 R1 规则时复制"| FWD
+    FWD -.->|"重编码/再采样"| EXT
+    DEC ==> ENR ==> K
+    SNMP -.->|"轮询"| R
+    SNMP ==>|"接口计数器/资产"| K
+    SNMP ==> VM
+    BG -.->|"BGP/BMP 对等会话"| R
+    BG ==>|"RIB Lookup 供富化；bgp.updates"| ENR
+    K ==> AGG
+    K ==> DET
+    AGG ==>|"聚合结果"| CH
+    DET ==>|"攻击/分钟详情"| CH
+    DET -.->|"攻击事件→alarms topic"| K
+    DET -.->|"处置联动(R9)"| BG
+    CH ==> UI
+    RD ==> UI
+    VM ==> UI
 ```
-┌────────────────────────── 数据源 ──────────────────────────┐
-│ NetStream/NetFlow v5/v9/IPFIX、sFlow (UDP)   镜像报文(可选)  │
-│ SNMP轮询/Trap   BGP Peer/BMP镜像   Syslog                   │
-└──────┬─────────────────────────────────────────────────────┘
-       │
-┌──────▼──────────────────────────┐
-│ ① 汇聚分流 LucidBroker           │  FLB 流负载均衡（exporter→采集节点哈希）
-│  · Forwarder：R1 多目的转发+再采样 │  （可选）DPDK 报文分流（M3+）
-└──────┬──────────────────────────┘
-       │
-┌──────▼──────────────────────────┐   ┌───────────────────────┐
-│ ② 采集解析 LucidCollector        │   │ ⑥ LucidBGP (R9)        │
-│  NetStream/IPFIX/sFlow 解码      │   │  rsbgp-console 改名适配 │
-│  归一化 protobuf · 富化          │◄──┤  gobgpd 管理 · 处置闭环 │
-│  ASN/Geo/Zone(R2)/接口角色(R4)   │   │  RIB Feeder → LPM 富化  │
-│  SNMP采集+接口角色识别(R4)        │   └───────────────────────┘
-└──────┬──────────────────────────┘
-       │ Kafka（flows.raw / bgp.* / snmp.* / alarms / …）
-┌──────▼──────────────────────────┐
-│ ③ 流式分析 LucidAnalytics        │
-│  分钟聚合矩阵 · TopN · 基线       │
-│  Zone 秒级检测引擎(R2/R7)         │
-│  扫段检测(R7) · 攻击事件/分钟详情(R5)│
-└──────┬───────────┬───────────────┘
-       │           │
-┌──────▼─────┐ ┌───▼────────────┐
-│ ④ 存储      │ │ Redis 实时状态  │
-│ ClickHouse │ │ VictoriaMetrics │
-│ 明细15天(R6)│ │ MinIO 导出归档  │
-└──────┬─────┘ └───┬────────────┘
-┌──────▼───────────▼──────────────┐
-│ ⑤ 展示与开放 LucidConsole        │  流量矩阵/攻击中心(含原始日志查询导出R5/R6)
-│  报表中心(R8) · REST API · Webhook│  内嵌 LucidBGP 页面
-└─────────────────────────────────┘
-横切：⑦ LucidMaster（etcd/gRPC：节点/配置/哈希分配/RBAC/自监控/审计）
+
+**一条流记录的旅程（主链路，实线）**：
+
+1. 路由器/交换机把 NetStream/sFlow 通过 UDP 发给**汇聚分流层**（设备侧只配 FLB 地址，不配 N 台采集机）。
+2. **① 汇聚分流**不解析流内容，只做两件事：按 exporter 一致性哈希把 UDP 报文分发给某一台**② 采集节点**；命中 R1 转发规则时复制一份重编码发给第三方系统。
+3. **② 采集解析**（4 节点并行，各管一部分设备）解码模板与记录 → 归一化 FlowRecord → 富化（AS/Geo/客户域/接口角色）→ 写 Kafka。
+4. **Kafka** 总线解耦上下游。
+5. **③ 流式分析**消费 Kafka：分钟聚合、TopN、基线、Zone 秒级检测；聚合结果与攻击事件分别落存储。
+6. **④ 存储**：ClickHouse（明细 15 天 + 聚合表）、Redis（实时状态/证据）、VictoriaMetrics（指标）。
+7. **⑤ 展示与开放只读存储与缓存、调各模块 API——不在数据通路上**，它宕机不影响采集与分析。
+
+**旁路通道（虚线）**：SNMP 是②里的 snmp-agent **主动发起轮询**的独立通道，不经分流层；BGP/BMP 由⑥ LucidGP 的 gobgpd 维护对等会话、RIB Feeder 为②提供 IP→ASN 富化；攻击处置是控制流闭环：③ → alarms → ⑥下发 → 回执 → ③验证缓解。
+
+### 3.2 物理部署视图（10 节点，模块到机器的映射）
+
+```mermaid
+flowchart TB
+    R["网络设备 ×N<br/>（NetStream / SNMP / BGP）"]
+
+    subgraph L1["采集层 · 4 节点（2×12C / 128G / 25G×2）"]
+        N1["broker(FLB+Forwarder)<br/>+ collector"]
+        N2["broker + collector"]
+        N3["broker + collector"]
+        N4["broker + collector"]
+    end
+
+    K[("Kafka 集群（三副本：A1+A2+M）")]
+
+    subgraph L2["分析层 · 2 节点（2×24C / 256G）"]
+        A1["analytics + kafka + etcd<br/>+ gobgpd 主"]
+        A2["analytics + kafka + etcd<br/>+ gobgpd 备"]
+    end
+
+    subgraph L3["存储层 · 3 节点（NVMe + HDD）"]
+        S1["clickhouse + inserter<br/>+ 导出worker"]
+        S2["clickhouse + inserter<br/>+ 导出worker + etcd"]
+        S3["clickhouse + inserter<br/>+ 导出worker"]
+    end
+
+    subgraph L4["管理层 · 1 节点"]
+        M["master + 网关/Console + PostgreSQL<br/>+ VM + Redis + MinIO + kafka 第3副本"]
+    end
+
+    R -->|"UDP"| N1 & N2 & N3 & N4
+    N1 & N2 & N3 & N4 -->|"FlowRecord"| K
+    K --> A1 & A2
+    A1 & A2 -->|"聚合/攻击写入"| S1 & S2 & S3
+    M -.->|"控制面：etcd/gRPC/配置/分配表"| L1 & L2 & L3
+    M -->|"查询/展示"| S1 & S2 & S3
 ```
+
+### 3.3 为什么"汇聚分流"要独立成层（而不是设备直发采集节点）
+
+| 原因 | 说明 |
+|---|---|
+| **模板粘性** | NetFlow v9/IPFIX 的模板与数据报文必须落在同一节点解码；普通轮询式 UDP 负载均衡会把同一 exporter 的报文打散到多台机器导致大面积丢流。FLB 按 exporter **一致性哈希**保证同设备同节点 |
+| **扩缩容不动设备** | 设备侧只配 FLB 地址（或 VIP）；采集节点扩容/排水/升级只改 Master 下发的分配表，不用改 N 台路由器配置 |
+| **按权重调度** | Master 观测每 exporter 实测速率与节点容量权重做分配，超重载 exporter（>5w fps）独占绑定 |
+| **R1 天然同源** | 多目的转发/再采样与分流共用同一份收包路径，一次收包两用，零额外开销 |
+
+已评估的替代方案：LVS/Nginx UDP 源 IP 哈希（可行，但排水/权重/R1 仍要自研，还多一套运维面）；设备 NetStream 双目的直发两台采集机（配置量随节点数 ×N 增长、无法弹性扩容）；组播（网络侧不可控）——均被否。
+
+### 3.4 部署形态
+
+| 形态 | 适用 | 差异 |
+|---|---|---|
+| **标准分层**（默认，本图） | ≥5 节点 / >30w fps | FLB 与 Collector 分进程部署于采集节点 |
+| **一体化** | ≤3 节点 / ≤30w fps（POC/小网点） | FLB 内嵌进 collector 同进程（同二进制开关），设备直连每台采集，Master 分配表仅用于 R1 转发与故障切换 |
 
 ## 4. 模块与文档索引
 
