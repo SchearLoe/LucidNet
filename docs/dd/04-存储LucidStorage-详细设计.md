@@ -33,7 +33,7 @@ STORAGE POLICY hot_cold = hot, cold   -- TTL 到期自动迁移（move_factor 0.
 ### 2.2 查询 API（REST，经 Console 网关）
 ```
 POST /api/v1/flows/search
-{ "time_start":…, "time_end":…,
+{ "time_start":…, "time_end":…,        // epoch 秒（09 §6 裁定；窗口 ≤6h）
   "filters":{"src_ip":"1.2.3.0/24","dst_port":443,"proto":6,
              "zone_id":101,"device_id":7,"in_if":12,"ip_version":6},
   "order_by":"bytes","desc":true, "page":1,"page_size":100,
