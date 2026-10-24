@@ -12,8 +12,16 @@ import (
 
 // runtimeDest —— 运行时目的地。配置签名（sig）相同的跨版本复用（会话不中断），
 // 任何配置变化生成新实例（= 新 session，旧会话 flush 后关闭，dd/01 §3.2 #5）。
+// 断连重放（任务二，dd/01 §4.3）：UDP 目的地持有下行重放缓冲；会话重建
+// （sig 变更）视为断连重放场景之一——旧会话缓冲经引擎 stash 移交同逻辑
+// 目的地（rule_id|dest 键）的新会话，按序重放。
 type runtimeDest interface {
 	Sig() string
+	// ReplayKey —— 重放缓冲迁移键（rule_id|dest 标签）；"" = 无缓冲（kafka 由 producer 内部缓冲）。
+	ReplayKey() string
+	// TakeReplay / InstallReplay —— 会话重建时的缓冲迁移。
+	TakeReplay() []replayItem
+	InstallReplay(items []replayItem, now time.Time)
 	Close()
 }
 
@@ -42,10 +50,39 @@ func destTag(d *Destination) string {
 type passthroughDest struct {
 	sender *udpSender
 	sig    string
+	key    string // ReplayKey（rule_id|dest）
+}
+
+// newPassthroughDest —— 构造透传目的地（不限速：限速属代理会话，dd/01 §4.3）。
+func newPassthroughDest(s, replayKey string, d *Destination, counters Counters, lb destLabel, rp replayPolicy) (*passthroughDest, error) {
+	var hooks senderHooks
+	hooks.onSent = func() { counters.ForwardRecords(lb.ruleID, lb.dest, 1) }
+	hooks.onDrop = func() { counters.ForwardDrop(lb.ruleID, lb.dest, 1) }
+	dest := lb.dest
+	hooks.onDownChange = func(down bool) { counters.SetDestDown(dest, down) }
+	hooks.onReplayBuffered = func(n int) { counters.SetReplayBuffered(lb.ruleID, lb.dest, n) }
+	hooks.onReplayDropped = func(n int) { counters.ReplayDropped(lb.ruleID, lb.dest, n) }
+	hooks.onReplayLag = func(lag time.Duration) { counters.SetReplayLag(lb.ruleID, lb.dest, lag) }
+	sender, err := newUDPSender("udp", d.Addr, 0, rp, hooks)
+	if err != nil {
+		return nil, err
+	}
+	return &passthroughDest{sender: sender, sig: s, key: replayKey}, nil
 }
 
 // Sig 实现 runtimeDest。
 func (d *passthroughDest) Sig() string { return d.sig }
+
+// ReplayKey 实现 runtimeDest。
+func (d *passthroughDest) ReplayKey() string { return d.key }
+
+// TakeReplay 实现 runtimeDest。
+func (d *passthroughDest) TakeReplay() []replayItem { return d.sender.TakeReplay() }
+
+// InstallReplay 实现 runtimeDest。
+func (d *passthroughDest) InstallReplay(items []replayItem, now time.Time) {
+	d.sender.InstallReplay(items, now)
+}
 
 // Close 实现 runtimeDest。
 func (d *passthroughDest) Close() { d.sender.Close() }
@@ -78,7 +115,7 @@ type proxyDest struct {
 }
 
 // newProxyDest 构造代理会话目的地（每目的地独立 session：序列号/模板/限速，dd/01 §4.3）。
-func newProxyDest(s string, lb destLabel, obsDom uint32, d *Destination, counters Counters, now time.Time) (*proxyDest, error) {
+func newProxyDest(s string, lb destLabel, obsDom uint32, d *Destination, counters Counters, rp replayPolicy, now time.Time) (*proxyDest, error) {
 	var hooks senderHooks
 	// 记录数由引擎按 kept records 精确计数（deliverRecords 调用方）；
 	// 发送协程钩子只计数据报级丢失（限速/队列溢出/写失败 → drop 打点）。
@@ -86,7 +123,10 @@ func newProxyDest(s string, lb destLabel, obsDom uint32, d *Destination, counter
 	hooks.onDrop = func() { counters.ForwardDrop(lb.ruleID, lb.dest, 1) }
 	dest := lb.dest
 	hooks.onDownChange = func(down bool) { counters.SetDestDown(dest, down) }
-	sender, err := newUDPSender("udp", d.Addr, DefaultProxyRateBytes, hooks)
+	hooks.onReplayBuffered = func(n int) { counters.SetReplayBuffered(lb.ruleID, lb.dest, n) }
+	hooks.onReplayDropped = func(n int) { counters.ReplayDropped(lb.ruleID, lb.dest, n) }
+	hooks.onReplayLag = func(lag time.Duration) { counters.SetReplayLag(lb.ruleID, lb.dest, lag) }
+	sender, err := newUDPSender("udp", d.Addr, DefaultProxyRateBytes, rp, hooks)
 	if err != nil {
 		return nil, err
 	}
@@ -107,6 +147,17 @@ func newProxyDest(s string, lb destLabel, obsDom uint32, d *Destination, counter
 
 // Sig 实现 runtimeDest。
 func (d *proxyDest) Sig() string { return d.sig }
+
+// ReplayKey 实现 runtimeDest。
+func (d *proxyDest) ReplayKey() string { return d.lb.ruleID + "|" + d.lb.dest }
+
+// TakeReplay 实现 runtimeDest。
+func (d *proxyDest) TakeReplay() []replayItem { return d.sender.TakeReplay() }
+
+// InstallReplay 实现 runtimeDest。
+func (d *proxyDest) InstallReplay(items []replayItem, now time.Time) {
+	d.sender.InstallReplay(items, now)
+}
 
 // deliverRecords —— 过滤/再采样后的记录进入会话编码（调用方已按目的地复制记录）。
 func (d *proxyDest) deliverRecords(recs []shared.FlowRecord, counters Counters, now time.Time) {
@@ -220,6 +271,15 @@ func newKafkaDest(s string, lb destLabel, d *Destination, kafka KafkaSink, count
 
 // Sig 实现 runtimeDest。
 func (d *kafkaDest) Sig() string { return d.sig }
+
+// ReplayKey 实现 runtimeDest（kafka 由 producer 内部缓冲/重试，不参与断连重放）。
+func (d *kafkaDest) ReplayKey() string { return "" }
+
+// TakeReplay 实现 runtimeDest（无缓冲，no-op）。
+func (d *kafkaDest) TakeReplay() []replayItem { return nil }
+
+// InstallReplay 实现 runtimeDest（no-op）。
+func (d *kafkaDest) InstallReplay([]replayItem, time.Time) {}
 
 // Close 实现 runtimeDest（Kafka client 生命周期归引擎，无需逐目的地关闭）。
 func (d *kafkaDest) Close() {}

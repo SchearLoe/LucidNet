@@ -3,6 +3,8 @@
 package metrics
 
 import (
+	"time"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
@@ -25,6 +27,10 @@ type Metrics struct {
 	fwdDestDown    *prometheus.GaugeVec   // dest
 	fwdResample    *prometheus.GaugeVec   // dest
 	proxyDecodeErr prometheus.Counter
+
+	replayBuffered *prometheus.GaugeVec   // rule_id, dest
+	replayDropped  *prometheus.CounterVec // rule_id, dest
+	replayLag      *prometheus.GaugeVec   // rule_id, dest
 
 	kafkaProduce  *prometheus.CounterVec // topic
 	kafkaError    *prometheus.CounterVec // topic
@@ -74,8 +80,17 @@ func New(reg prometheus.Registerer) *Metrics {
 			Name: "lucid_broker_forward_resample_ratio", Help: "Configured keep ratio per destination (dd/01 §5).",
 		}, []string{"dest"}),
 		proxyDecodeErr: f.NewCounter(prometheus.CounterOpts{
-			Name: "lucid_broker_proxy_decode_errors_total", Help: "Proxy-path decode failures.",
+			Name: "lucid_broker_proxy_decode_errors_total", Help: "Proxy-path decode failures (set/packet level).",
 		}),
+		replayBuffered: f.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "lucid_broker_forward_replay_buffered", Help: "Datagrams buffered for replay per rule/dest (dest down, dd/01 §4.3).",
+		}, []string{"rule_id", "dest"}),
+		replayDropped: f.NewCounterVec(prometheus.CounterOpts{
+			Name: "lucid_broker_forward_replay_dropped_total", Help: "Replay datagrams evicted (buffer full / window expired) per rule/dest.",
+		}, []string{"rule_id", "dest"}),
+		replayLag: f.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "lucid_broker_forward_replay_lag_seconds", Help: "Age of oldest buffered replay datagram per rule/dest.",
+		}, []string{"rule_id", "dest"}),
 		kafkaProduce: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "lucid_broker_kafka_produce_total", Help: "Records accepted by Kafka producer per topic.",
 		}, []string{"topic"}),
@@ -151,8 +166,33 @@ func (m *Metrics) SetResampleRatio(dest string, ratio float64) {
 	m.fwdResample.WithLabelValues(dest).Set(ratio)
 }
 
-// ProxyDecodeError 实现 forwarder.Counters。
-func (m *Metrics) ProxyDecodeError() { m.proxyDecodeErr.Inc() }
+// ProxyDecodeErrors 实现 forwarder.Counters（set/包级解码失败合计）。
+func (m *Metrics) ProxyDecodeErrors(n int) {
+	if n == 1 {
+		m.proxyDecodeErr.Inc()
+		return
+	}
+	m.proxyDecodeErr.Add(float64(n))
+}
+
+// SetReplayBuffered 实现 forwarder.Counters（断连重放缓冲条目数，dd/01 §4.3）。
+func (m *Metrics) SetReplayBuffered(ruleID, dest string, n int) {
+	m.replayBuffered.WithLabelValues(ruleID, dest).Set(float64(n))
+}
+
+// ReplayDropped 实现 forwarder.Counters（缓冲满/超窗淘汰计数）。
+func (m *Metrics) ReplayDropped(ruleID, dest string, n int) {
+	m.replayDropped.WithLabelValues(ruleID, dest).Add(float64(n))
+}
+
+// SetReplayLag 实现 forwarder.Counters（最老缓冲条目年龄；空缓冲 0）。
+func (m *Metrics) SetReplayLag(ruleID, dest string, lag time.Duration) {
+	secs := lag.Seconds()
+	if secs < 0 {
+		secs = 0
+	}
+	m.replayLag.WithLabelValues(ruleID, dest).Set(secs)
+}
 
 // KafkaProduce 实现 forwarder.Counters。
 func (m *Metrics) KafkaProduce(topic string, n int) {

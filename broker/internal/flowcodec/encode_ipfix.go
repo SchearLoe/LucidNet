@@ -11,33 +11,19 @@ import (
 // Observation Domain ID = 规则目的地 id；Template ID 每会话 256 起；
 // 采样率写标准 IE samplingPacketInterval(305) / samplingPacketAlgorithm(304)（Options Template）。
 
-// IANA IPFIX enterprise-free 信息元素编号（RFC 7011/5102/7102）。
+// IANA IPFIX 信息元素编号统一定义见 decode_ie.go（v9/IPFIX 同号共用表；
+// 本文件只补充重编码专用项）。
 const (
-	ieOctetDeltaCount          = 1   // uint64
-	iePacketDeltaCount         = 2   // uint64
-	ieIPClassOfService         = 5   // uint8
-	ieProtocolIdentifier       = 4   // uint8
-	ieSourceTransportPort      = 7   // uint16
-	ieSourceIPv4Address        = 8   // 4B
-	ieIngressInterface         = 10  // uint32
-	ieDestinationTransportPort = 11  // uint16
-	ieDestinationIPv4Address   = 12  // 4B
-	ieEgressInterface          = 14  // uint32
-	ieBGPSourceASNumber        = 16  // uint32
-	ieBGPDestinationASNumber   = 17  // uint32
-	ieSourceIPv6Address        = 27  // 16B
-	ieDestinationIPv6Address   = 28  // 16B
-	ieFlowStartMilliseconds    = 152 // dateTimeMilliseconds
-	ieFlowEndMilliseconds      = 153 // dateTimeMilliseconds
-	ieUnionTCPFlags            = 232 // uint8
-	ieSamplingPacketAlgorithm  = 304 // uint8
-	ieSamplingPacketInterval   = 305 // uint32
+	// ieSelectorAlias —— 采样算法经 PSAMP selectorAlgorithm(304) 下发
+	// （dd/01 §4.2 引用的 "samplingPacketAlgorithm" 与 IANA 304 同号同义）。
+	ieSelectorAlgorithm = 304
 )
 
-// 采样算法枚举（IANA，经 samplingPacketAlgorithm 下发）。
+// 采样算法枚举（IANA selectorAlgorithm 取值，经 IE 304 下发）：
+// 1=Systematic count-based（确定性 1/N）；4=Uniform probabilistic（随机 1/N）。
 const (
 	IPFIXAlgoDeterministic uint8 = 1
-	IPFIXAlgoRandom        uint8 = 2
+	IPFIXAlgoRandom        uint8 = 4
 )
 
 const (
@@ -124,14 +110,15 @@ func (e *IPFIXEncoder) Flush(now time.Time, algo uint8, interval uint32) []byte 
 
 // templateSets —— 数据模板（v4/v6）+ 采样 Options 模板（305/304，dd/01 §4.2）。
 func (e *IPFIXEncoder) templateSets(algo uint8, interval uint32, now time.Time) []byte {
-	// —— v4 数据模板：15 字段
+	// —— v4 数据模板：15 字段（TCP flags 经标准 IE 6 tcpControlBits；
+	// 原 IE 232 实为 responderOctets，M1 勘误）——
 	fields4 := []templateField{
 		{ieFlowStartMilliseconds, 8}, {ieFlowEndMilliseconds, 8},
 		{ieSourceIPv4Address, 4}, {ieDestinationIPv4Address, 4},
 		{ieSourceTransportPort, 2}, {ieDestinationTransportPort, 2},
 		{ieProtocolIdentifier, 1},
 		{iePacketDeltaCount, 8}, {ieOctetDeltaCount, 8},
-		{ieUnionTCPFlags, 1}, {ieIPClassOfService, 1},
+		{ieTCPControlBits, 1}, {ieIPClassOfService, 1},
 		{ieIngressInterface, 4}, {ieEgressInterface, 4},
 		{ieBGPSourceASNumber, 4}, {ieBGPDestinationASNumber, 4},
 	}
@@ -143,10 +130,11 @@ func (e *IPFIXEncoder) templateSets(algo uint8, interval uint32, now time.Time) 
 	fields6[3] = templateField{ieDestinationIPv6Address, 16}
 	t6 := encodeTemplateSet(ipfixTemplateSetID, ipfixDataTemplateV6, fields6)
 
-	// —— 采样 Options 模板：scope=System(0,4B)，字段 samplingPacketInterval/Algorithm
+	// —— 采样 Options 模板：scope=System(0,4B)，字段 selectorAlgorithm(304)/
+	// samplingPacketInterval(305)（dd/01 §4.2）——
 	opt := encodeOptionsSet(ipfixSamplingTemplate,
 		templateField{0, 4},
-		[]templateField{{ieSamplingPacketInterval, 4}, {ieSamplingPacketAlgorithm, 1}},
+		[]templateField{{ieSamplingPacketInterval, 4}, {ieSelectorAlgorithm, 1}},
 		[][]byte{samplingOptionsRecord(algo, interval)})
 	return append(append(t4, t6...), opt...)
 }
@@ -215,6 +203,7 @@ func encodeTemplateSet(setID, templateID uint16, fields []templateField) []byte 
 }
 
 // encodeOptionsSet —— Options Template Set + 预编码 options 记录（RFC 7011 §3.4.2）。
+// 注意：Field Count 必须含 scope 字段（M1 曾误写不含 scope 的字段数，勘误）。
 func encodeOptionsSet(templateID uint16, scope templateField, fields []templateField, records [][]byte) []byte {
 	recLen := 0
 	if len(records) > 0 {
@@ -225,8 +214,8 @@ func encodeOptionsSet(templateID uint16, scope templateField, fields []templateF
 	set = binary.BigEndian.AppendUint16(set, ipfixOptionsSetID)
 	set = binary.BigEndian.AppendUint16(set, uint16(setLen))
 	set = binary.BigEndian.AppendUint16(set, templateID)
-	set = binary.BigEndian.AppendUint16(set, uint16(len(fields))) // Options 字段数（不含 scope）
-	set = binary.BigEndian.AppendUint16(set, 1)                   // Scope 字段数
+	set = binary.BigEndian.AppendUint16(set, uint16(len(fields)+1)) // Field Count（含 scope，RFC 7011 §3.4.2）
+	set = binary.BigEndian.AppendUint16(set, 1)                     // Scope 字段数
 	set = binary.BigEndian.AppendUint16(set, scope.ie)
 	set = binary.BigEndian.AppendUint16(set, scope.length)
 	for _, f := range fields {

@@ -79,7 +79,8 @@ func New(cfg config.Config, m *metrics.Metrics, log *slog.Logger) (*Engine, erro
 	if e.producer != nil {
 		sink = e.producer
 	}
-	e.fwd = forwarder.NewEngine(sink, m)
+	e.fwd = forwarder.NewEngine(sink, m,
+		forwarder.WithReplay(cfg.ReplayWindow, cfg.ReplayMaxBytes)) // 断连重放（dd/01 §4.3）
 
 	// —— FLB（查表分发 + 探活） ——
 	health := flb.NewHealth(cfg.ProbeFailThreshold, cfg.ProbeRestoreAfter, func(addr string, down bool) {

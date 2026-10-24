@@ -27,19 +27,27 @@ func (s *stubKafka) Produce(_ context.Context, topic string, key, val []byte) {
 
 // testCounters —— Counters 桩。
 type testCounters struct {
-	records   int
-	drops     int
-	decodeErr int
-	produced  int
+	records      int
+	drops        int
+	decodeErr    int
+	produced     int
+	replayDrop   int
+	replayBuf    int
+	replayLagSum time.Duration
 }
 
-func (c *testCounters) ForwardRecords(string, string, int) { c.records += 1 }
-func (c *testCounters) ForwardDrop(string, string, int)    { c.drops++ }
-func (c *testCounters) SetDestDown(string, bool)           {}
-func (c *testCounters) SetResampleRatio(string, float64)   {}
-func (c *testCounters) ProxyDecodeError()                  { c.decodeErr++ }
-func (c *testCounters) KafkaProduce(string, int)           { c.produced++ }
-func (c *testCounters) KafkaProduceError(string, int)      {}
+func (c *testCounters) ForwardRecords(string, string, int)    { c.records += 1 }
+func (c *testCounters) ForwardDrop(string, string, int)       { c.drops++ }
+func (c *testCounters) SetDestDown(string, bool)              {}
+func (c *testCounters) SetResampleRatio(string, float64)      {}
+func (c *testCounters) ProxyDecodeErrors(n int)               { c.decodeErr += n }
+func (c *testCounters) KafkaProduce(string, int)              { c.produced++ }
+func (c *testCounters) KafkaProduceError(string, int)         {}
+func (c *testCounters) SetReplayBuffered(string, string, int) {}
+func (c *testCounters) ReplayDropped(string, string, int)     { c.replayDrop++ }
+func (c *testCounters) SetReplayLag(string, string, time.Duration) {
+	c.replayLagSum = time.Second
+}
 
 // buildV5 —— 3 记录 v5 数据报（src = exporter）。
 func buildV5(t *testing.T, count int) []byte {
@@ -252,7 +260,8 @@ func TestEngineFilter(t *testing.T) {
 	}
 }
 
-// TestEngineUnsupportedDecode —— v9 报文进入代理路径 → 解码错误计数（GoFlow2 fork 前，dd/01 §4）。
+// TestEngineUnsupportedDecode —— 未知协议报文进入代理路径 → 解码错误计数。
+// （v9/IPFIX/sFlow 已支持，任务一；此处覆盖探测入口的兜底分支。）
 func TestEngineUnsupportedDecode(t *testing.T) {
 	sink := &stubKafka{}
 	tc := &testCounters{}
@@ -267,7 +276,7 @@ func TestEngineUnsupportedDecode(t *testing.T) {
 		}},
 	})
 	dg := make([]byte, 32)
-	binary.BigEndian.PutUint16(dg[0:2], 9)
+	binary.BigEndian.PutUint16(dg[0:2], 999) // 未知协议版本
 	e.Process(dg, exporterOf("10.1.1.1"))
 	if tc.decodeErr == 0 || len(sink.msgs) != 0 {
 		t.Errorf("decodeErr=%d msgs=%d", tc.decodeErr, len(sink.msgs))

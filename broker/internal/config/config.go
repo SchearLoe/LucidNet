@@ -52,6 +52,11 @@ type Config struct {
 	ProbeFailThreshold int
 	// ProbeRestoreAfter 本地摘除后 Master 未纠正的恢复时限（dd/01 §2.3：60s 信 Master）。
 	ProbeRestoreAfter time.Duration
+
+	// ReplayWindow / ReplayMaxBytes 目的地断连重放环形缓冲策略
+	// （dd/01 §4.3 + 任务二：5s 或 512MB 先到为准；0/负 = 禁用）。
+	ReplayWindow   time.Duration
+	ReplayMaxBytes int64
 }
 
 // 缺省值（对照 dd/01 / hld/01 / dd/08 §2.2）。
@@ -63,6 +68,8 @@ const (
 	DefaultProbeInterval     = 1 * time.Second
 	DefaultProbeFailThresh   = 3
 	DefaultProbeRestoreAfter = 60 * time.Second
+	DefaultReplayWindow      = 5 * time.Second // dd/01 §4.3：断连重放窗口
+	DefaultReplayMaxBytes    = 512 << 20       // dd/01 §4.3：环形 512MB
 	DefaultAssignKey         = "/lucid/assign/flow"
 	DefaultRulesKey          = "/lucid/forward/rules"
 )
@@ -103,6 +110,8 @@ func FromEnv() (Config, error) {
 	cfg.ProbeInterval = time.Duration(envInt("LUCID_BROKER_PROBE_INTERVAL_MS", int(DefaultProbeInterval/time.Millisecond))) * time.Millisecond
 	cfg.ProbeFailThreshold = envInt("LUCID_BROKER_PROBE_FAIL_THRESHOLD", DefaultProbeFailThresh)
 	cfg.ProbeRestoreAfter = time.Duration(envInt("LUCID_BROKER_PROBE_RESTORE_AFTER_MS", int(DefaultProbeRestoreAfter/time.Millisecond))) * time.Millisecond
+	cfg.ReplayWindow = time.Duration(envInt("LUCID_BROKER_REPLAY_WINDOW_MS", int(DefaultReplayWindow/time.Millisecond))) * time.Millisecond
+	cfg.ReplayMaxBytes = int64(envInt("LUCID_BROKER_REPLAY_MAX_BYTES", DefaultReplayMaxBytes))
 
 	if len(cfg.ListenPorts) == 0 {
 		errs = append(errs, errors.New("config: no listen ports"))
