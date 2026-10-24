@@ -2,6 +2,7 @@ package master
 
 import (
 	"context"
+	"crypto/rsa"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"github.com/SchearLoe/lucidnet/master/internal/config"
 	"github.com/SchearLoe/lucidnet/master/internal/coord"
 	lucidnetv1 "github.com/SchearLoe/lucidnet/master/internal/masterpb"
+	"github.com/SchearLoe/lucidnet/master/internal/metrics"
 	"github.com/SchearLoe/lucidnet/master/internal/rbac"
 	"github.com/SchearLoe/lucidnet/master/internal/registry"
 	"github.com/SchearLoe/lucidnet/master/internal/restapi"
@@ -44,6 +46,7 @@ type Server struct {
 	grpcSrv *grpc.Server
 	httpSrv *http.Server
 	jwt     *auth.Signer
+	met     *metrics.Metrics
 	etcdCLI *clientv3.Client
 	pool    *pgxpool.Pool
 }
@@ -116,6 +119,9 @@ func (s *Server) migrate() error {
 func (s *Server) buildCore() error {
 	s.hub = rpc.NewHub()
 	now := time.Now
+
+	// —— Prometheus（lucid_master_*，docs/11 §9；挂 REST :9141 /metrics）——
+	s.met = metrics.New()
 
 	// —— etcd（可选；配置/分配表发布 + 节点 lease 镜像 + 选主，docs/09 §5 / hld/07 §3）——
 	var cfgPub config.Publisher = config.NopPublisher{}
@@ -199,21 +205,45 @@ func (s *Server) buildCore() error {
 		return s.leader.IsLeader()
 	}
 
-	// —— 配置管理（校验 → PG 权威 → etcd → ACK，docs/dd/07 §5）——
+	// —— 配置管理（校验 → PG 权威 → etcd → ACK，docs/dd/07 §5；PG outbox 补偿）——
 	s.cfg = config.NewStore(configVersionsStore(s), config.Options{
 		Publisher: cfgPub,
 		Targets:   &scopeTargets{reg: s.reg, leader: isLeader},
 		CmdSink:   &reloadSink{hub: s.hub},
+		Outbox:    configOutbox(s),
+		Obs:       metricsObs{s.met},
 		Now:       now,
 	})
 
-	// —— JWT（HS256，docs/dd/07 §4）——
+	// —— 节点分布指标采样源（scrape 时从 registry 取快照）——
+	s.met.SetNodeSource(func() []metrics.NodeState {
+		nodes, err := s.reg.List(context.Background())
+		if err != nil {
+			return nil
+		}
+		out := make([]metrics.NodeState, 0, len(nodes))
+		for _, n := range nodes {
+			out = append(out, metrics.NodeState{
+				Role: string(n.Role), State: string(n.State), Degraded: n.Degraded,
+			})
+		}
+		return out
+	})
+
+	// —— JWT（HS256 基线；配置 RS256 密钥对后签发切换 RS256，docs/dd/07 §4）——
 	secret := s.opts.JWTSecret
 	if secret == "" {
 		secret = "lucidnet-dev-jwt-secret"
 		log.Printf(`{"level":"warn","module":"master","msg":"LUCID_MASTER_JWT_SECRET empty: using insecure dev secret"}`)
 	}
-	s.jwt = auth.NewSigner(secret, now)
+	var signerOpts []auth.Option
+	if rsKey, err := s.loadRS256Key(); err != nil {
+		return err
+	} else if rsKey != nil {
+		signerOpts = append(signerOpts, auth.WithRS256(rsKey))
+	}
+	s.jwt = auth.NewSigner(secret, now, signerOpts...)
+	log.Printf(`{"level":"info","module":"master","msg":"jwt signer ready","alg":%q}`, s.jwt.Alg())
 
 	// —— gRPC（docs/09 §4：9140）——
 	svc := rpc.NewService(rpc.Deps{
@@ -223,11 +253,12 @@ func (s *Server) buildCore() error {
 	s.grpcSrv = grpc.NewServer()
 	lucidnetv1.RegisterMasterServer(s.grpcSrv, svc)
 
-	// —— REST（docs/09 §6；端口基线 9141，dd/08 §3.1）——
+	// —— REST（docs/09 §6；端口基线 9141，dd/08 §3.1；/metrics 同端口）——
 	rest := restapi.NewServer(restapi.Deps{
 		Signer: s.jwt, Users: s.users, Audit: s.aud,
 		Config: s.cfg, Registry: s.reg, Assigner: s.asg,
 		Hub: &hubAdapter{hub: s.hub}, Leader: isLeader, Now: now,
+		Metrics: s.met, MetricsHandler: s.met.Handler(),
 	})
 	s.httpSrv = &http.Server{
 		Addr:              s.opts.HTTPAddr,
@@ -251,12 +282,56 @@ func registryStore(s *Server) registry.Store {
 	return registry.NewMemStore()
 }
 
+// loadRS256Key 装载 RS256 私钥（PEM 内容或文件路径二选一；docs/dd/07 §4）。
+// 未配置返回 (nil, nil) —— 保持 HS256 开发模式。
+func (s *Server) loadRS256Key() (*rsa.PrivateKey, error) {
+	keyPEM := s.opts.JWTRS256KeyPEM
+	if s.opts.JWTRS256KeyFile != "" {
+		b, err := os.ReadFile(s.opts.JWTRS256KeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("read jwt rs256 key file: %w", err)
+		}
+		keyPEM = string(b)
+	}
+	if keyPEM == "" {
+		return nil, nil
+	}
+	key, err := auth.ParsePrivateKeyPEM([]byte(keyPEM))
+	if err != nil {
+		return nil, fmt.Errorf("load jwt rs256 key: %w", err)
+	}
+	return key, nil
+}
+
 func configVersionsStore(s *Server) config.VersionsStore {
 	if s.pool != nil {
 		return config.NewPGVersions(s.pool)
 	}
 	return config.NewMemVersions()
 }
+
+// configOutbox —— 发布补偿队列（PG 权威持久化；开发模式内存实现，重启即丢）。
+func configOutbox(s *Server) config.OutboxStore {
+	if s.pool != nil {
+		return config.NewPGOutbox(s.pool)
+	}
+	return config.NewMemOutbox()
+}
+
+// metricsObs —— config.Observability → metrics 适配（scope/version 参数不进标签，
+// docs/11 §9 禁高基数：明细只进日志）。
+type metricsObs struct{ m *metrics.Metrics }
+
+// PublishAttempt 实现 config.Observability。
+func (o metricsObs) PublishAttempt(_ string, err error, elapsed time.Duration) {
+	o.m.PublishAttempt(err, elapsed)
+}
+
+// AckPartial 实现 config.Observability。
+func (o metricsObs) AckPartial(_ string, _ uint64, _, _ int) { o.m.AckPartial() }
+
+// OutboxDepth 实现 config.Observability。
+func (o metricsObs) OutboxDepth(pending int) { o.m.SetOutboxDepth(pending) }
 
 // scopeTargets —— config.TargetResolver：作用域 → 在线目标节点（ACK 统计口径）。
 type scopeTargets struct {

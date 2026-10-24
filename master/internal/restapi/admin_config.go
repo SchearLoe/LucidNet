@@ -210,6 +210,49 @@ func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, map[string]any{"scope": req.Scope, "rolled_back_to": req.Version, "new_version": newVersion})
 }
 
+// ---------- 发布补偿队列（PG outbox 持久化，docs/dd/07 §1 失败补偿重试队列） ----------
+
+// handleListOutbox 待重试补偿单（etcd 发布失败、退避重试中）。
+func (s *Server) handleListOutbox(w http.ResponseWriter, r *http.Request) {
+	entries, err := s.d.Config.PendingOutbox(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, 500, "list outbox failed")
+		return
+	}
+	if entries == nil {
+		entries = []config.OutboxEntry{}
+	}
+	writeOK(w, entries)
+}
+
+type cancelOutboxReq struct {
+	Scope   string `json:"scope"`
+	Version uint64 `json:"version"`
+}
+
+// handleCancelOutbox 人工取消补偿单（版本保持 failed；经重发新版本恢复）。
+func (s *Server) handleCancelOutbox(w http.ResponseWriter, r *http.Request) {
+	var req cancelOutboxReq
+	if err := decodeBody(r, &req); err != nil || req.Scope == "" || req.Version == 0 {
+		writeErr(w, http.StatusBadRequest, 400, "scope and version required")
+		return
+	}
+	if !s.requireLeader(w, r) {
+		return
+	}
+	if err := s.d.Config.CancelPending(r.Context(), req.Scope, req.Version); err != nil {
+		if errors.Is(err, config.ErrOutboxNotFound) {
+			writeErr(w, http.StatusNotFound, 404, "pending outbox entry not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, 500, "cancel outbox failed")
+		return
+	}
+	s.recordAudit(r, "config.outbox_cancel", "scope:"+req.Scope,
+		`{"version":`+strconv.FormatUint(req.Version, 10)+`}`, "cancel config publish retry")
+	writeOK(w, map[string]any{"scope": req.Scope, "version": req.Version, "status": "cancelled"})
+}
+
 // tenantZonesView —— 租户视角 zone 快照（平台管理员/无租户上下文返回全量）。
 func tenantZonesView(env config.Envelope, tenant string) map[string]any {
 	var zones []map[string]any

@@ -117,6 +117,9 @@ func (r *Registry) Register(ctx context.Context, n Node) (Node, error) {
 	}
 	n.State = StateOnline
 	n.Degraded = false
+	if n.NICs == nil {
+		n.NICs = []NIC{} // 规范化空档案（etcd/PG JSON 记 []，语义=未上报按 25G 基准）
+	}
 	if _, err := r.store.UpsertNode(ctx, n); err != nil {
 		return Node{}, errf("upsert node %s: %w", n.ID, err)
 	}
@@ -219,6 +222,50 @@ func (r *Registry) SetWeightOverride(ctx context.Context, id string, w float64) 
 	}
 	r.changed()
 	return nil
+}
+
+// UpdateNICs 心跳上报网卡变化时更新节点档案（metrics_json.nics；容量权重输入）。
+// 空列表忽略（保持注册时的档案与 25G 基准兜底语义）；网卡集合变化才落库并触发
+// 分配表重算（权重变化输入，docs/dd/07 §3 触发条件）。
+func (r *Registry) UpdateNICs(ctx context.Context, id string, nics []NIC) error {
+	if len(nics) == 0 {
+		return nil
+	}
+	n, err := r.store.GetNode(ctx, id)
+	if err != nil {
+		return errf("get node %s for nics: %w", id, err)
+	}
+	if nicsEqual(n.NICs, nics) {
+		return nil
+	}
+	n.NICs = nics
+	if _, err := r.store.UpsertNode(ctx, n); err != nil {
+		return errf("update nics %s: %w", id, err)
+	}
+	if err := r.mirrorPut(ctx, n); err != nil {
+		return errf("mirror node %s: %w", id, err)
+	}
+	r.changed()
+	return nil
+}
+
+// nicsEqual 网卡集合等价（按 name+speed 比较，忽略顺序与重复名）。
+func nicsEqual(a, b []NIC) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	key := func(n NIC) string { return n.Name + "\x00" + fmt.Sprint(n.SpeedGbps) }
+	counts := make(map[string]int, len(a))
+	for _, nic := range a {
+		counts[key(nic)]++
+	}
+	for _, nic := range b {
+		counts[key(nic)]--
+		if counts[key(nic)] < 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // Get 读取节点。

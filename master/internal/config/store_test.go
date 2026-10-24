@@ -43,6 +43,11 @@ func newTestStore(t *testing.T, nodes []string, pub Publisher) (*Store, *fakeSin
 		CmdSink:      sink,
 		AckTimeout:   50 * time.Millisecond,
 		KeepVersions: 3,
+		// 补偿队列快节奏（测试窗口）：扫描 10ms，退避 10ms→20ms→…封顶 40ms
+		Outbox:    NewMemOutbox(),
+		PollEvery: 10 * time.Millisecond,
+		RetryBase: 10 * time.Millisecond,
+		RetryMax:  40 * time.Millisecond,
 	}
 	return NewStore(NewMemVersions(), opts), sink
 }

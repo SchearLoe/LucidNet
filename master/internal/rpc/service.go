@@ -51,10 +51,18 @@ func NewService(d Deps) *Service {
 // Hub 命令中枢（restapi 触发排水命令用）。
 func (s *Service) Hub() *Hub { return s.d.Hub }
 
-// RegisterNode 节点注册：自报角色/容量 → 返回角色配置（docs/dd/07 §1）。
+// RegisterNode 节点注册：自报角色/容量（含 nics 网卡档案，Mbps→Gbps 换算入权重，
+// docs/dd/07 §2）→ 返回角色配置（docs/dd/07 §1）。
 func (s *Service) RegisterNode(ctx context.Context, info *lucidnetv1.NodeInfo) (*lucidnetv1.NodeAck, error) {
 	if info.GetId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "node id required")
+	}
+	var nics []registry.NIC
+	if len(info.GetNics()) > 0 {
+		nics = make([]registry.NIC, 0, len(info.GetNics()))
+		for _, nic := range info.GetNics() {
+			nics = append(nics, registry.NICFromMbps(nic.GetName(), nic.GetSpeedMbps()))
+		}
 	}
 	n, err := s.d.Registry.Register(ctx, registry.Node{
 		ID:    info.GetId(),
@@ -62,6 +70,7 @@ func (s *Service) RegisterNode(ctx context.Context, info *lucidnetv1.NodeInfo) (
 		Host:  info.GetHost(),
 		Cores: info.GetCores(),
 		MemGB: info.GetMemGb(),
+		NICs:  nics, // 空 = 未上报，权重按 25G 基准兜底（向后兼容旧版 Broker）
 		// 版本号来自心跳 metrics_json.version（NodeInfo 契约无版本字段）
 	})
 	if err != nil {
@@ -166,6 +175,11 @@ func (s *Service) handleStat(ctx context.Context, stat *lucidnetv1.NodeStat) err
 	}
 	if err := s.d.Registry.ObserveExporters(ctx, nodeID, metrics.Exporters); err != nil {
 		return fmt.Errorf("observe exporters: %w", err)
+	}
+	if len(metrics.NICs) > 0 { // 网卡变化上报：更新档案并触发权重重算（可选路径）
+		if err := s.d.Registry.UpdateNICs(ctx, nodeID, metrics.NICs); err != nil {
+			return fmt.Errorf("update nics: %w", err)
+		}
 	}
 	if ack := metrics.Ack; ack != nil {
 		if err := s.d.Config.Ack(ctx, nodeID, ack.Scope, ack.Version, ack.OK, ack.ErrMsg); err != nil {

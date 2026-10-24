@@ -59,6 +59,26 @@ func TestDevModeBootSmoke(t *testing.T) {
 	if !strings.Contains(health, `"status":"ok"`) {
 		t.Fatalf("healthz = %s", health)
 	}
+	// Prometheus /metrics（docs/11 §9：lucid_master_* 命名 + REST 计数）
+	metricsBody := mustGET(t, base+"/metrics")
+	for _, want := range []string{
+		"lucid_master_rest_requests_total",
+		"lucid_master_config_publish_total",
+		"lucid_master_outbox_pending",
+		"lucid_master_nodes",
+	} {
+		if !strings.Contains(metricsBody, want) {
+			t.Fatalf("/metrics missing %s", want)
+		}
+	}
+	// JWKS 公钥端点（开发模式未配置 RS256 → 空集；dd/07 §4）
+	jwks := mustGET(t, base+"/api/v1/auth/jwks")
+	if !strings.Contains(jwks, `"keys"`) {
+		t.Fatalf("jwks = %s", jwks)
+	}
+	if code := statusOf(t, mustReq(t, "GET", base+"/api/v1/auth/jwks.pem", nil, "")); code != 404 {
+		t.Fatalf("jwks.pem without rs256 status = %d, want 404", code)
+	}
 	// 登录（预置平台管理员）
 	var login struct {
 		Code int `json:"code"`
@@ -87,6 +107,19 @@ func TestDevModeBootSmoke(t *testing.T) {
 	decode(t, mustAuthGET(t, base+"/api/v1/admin/nodes", login.Data.AccessToken), &nodes)
 	if nodes.Data == nil {
 		t.Fatal("nodes data should be empty array")
+	}
+	// 鉴权命中后 /metrics 计数增长（路由模式标签）
+	metricsBody = mustGET(t, base+"/metrics")
+	if !strings.Contains(metricsBody, `route="GET /api/v1/admin/nodes"`) {
+		t.Fatalf("/metrics missing REST route counter: %s", metricsBody)
+	}
+	// 发布补偿队列查询（空数组；开发模式 NopPublisher 不产生失败单）
+	var outbox struct {
+		Data []json.RawMessage `json:"data"`
+	}
+	decode(t, mustAuthGET(t, base+"/api/v1/admin/outbox", login.Data.AccessToken), &outbox)
+	if outbox.Data == nil {
+		t.Fatal("outbox data should be empty array")
 	}
 	// 分配表（启动即计算，空表）
 	var table struct {

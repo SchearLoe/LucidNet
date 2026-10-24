@@ -52,10 +52,17 @@ func ValidRole(r Role) bool {
 	return false
 }
 
-// NIC —— 网卡档案（容量权重输入；NodeInfo gRPC 未携带，注册后经 admin API 补录）。
+// NIC —— 网卡档案（容量权重输入；NodeInfo.nics 注册上报，心跳 metrics_json.nics 变化顺带更新）。
 type NIC struct {
 	Name      string `json:"name"`
 	SpeedGbps uint32 `json:"speed_gbps"`
+}
+
+// NICFromMbps 由 proto NicSpec（speed_mbps 口径）构造 NIC（Gbps 口径）。
+// 单位换算：1 Gbps = 1000 Mbps，向下取整；不足 1 Gbps 的口速率为 0，
+// 参与权重计算时被忽略（见 Weight 的 25G 基准兜底）。
+func NICFromMbps(name string, speedMbps uint32) NIC {
+	return NIC{Name: name, SpeedGbps: speedMbps / 1000}
 }
 
 // Node —— 节点档案。
@@ -75,12 +82,15 @@ type Node struct {
 }
 
 // Weight —— 容量权重（docs/dd/07 §2）：weight = cores/24 × nic_speed/25G。
-// 权重下限 0.05（保证哈希环至少 1 个 vnode）；WeightOverride > 0 时优先。
+// nic_speed 取节点上报网卡中的最大速率（Gbps 口径，注册经 NICFromMbps 由
+// proto Mbps 换算）；未上报/全部不足 1G 时按 25G 基准（nic 因子 1.0，向后兼容
+// 未携带 nics 的旧版 Broker）。权重下限 0.05（保证哈希环至少 1 个 vnode）；
+// WeightOverride > 0 时优先。
 func (n Node) Weight() float64 {
 	if n.WeightOverride > 0 {
 		return n.WeightOverride
 	}
-	nicFactor := 1.0 // 未登记网卡按 25G 基准（NodeInfo 契约无 nic 字段，见模块 TODO）
+	nicFactor := 1.0 // 25G 基准兜底（NodeInfo 未上报 nics 时保持旧版行为）
 	var speed uint32
 	for _, nic := range n.NICs {
 		if nic.SpeedGbps > speed {
@@ -135,6 +145,7 @@ type Exporter struct {
 // {
 //   "version": "v1.0.0",
 //   "exporters": [{"ip":"10.0.0.1","fps":12345.6}],
+//   "nics": [{"name":"eth0","speed_gbps":25}],
 //   "ack": {"cmd_id":"...","scope":"/lucid/zones","version":7}
 // }
 
@@ -142,6 +153,7 @@ type Exporter struct {
 type NodeMetrics struct {
 	Version   string
 	Exporters []ExporterObs
+	NICs      []NIC // 网卡变化上报（可选；非空时更新节点档案并触发权重重算）
 	Ack       *CmdAck
 }
 
@@ -168,10 +180,11 @@ func ParseMetricsJSON(b []byte) (NodeMetrics, error) {
 	var raw struct {
 		Version   string        `json:"version"`
 		Exporters []ExporterObs `json:"exporters"`
+		NICs      []NIC         `json:"nics"`
 		Ack       *CmdAck       `json:"ack"`
 	}
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return NodeMetrics{}, fmt.Errorf("parse node metrics json: %w", err)
 	}
-	return NodeMetrics{Version: raw.Version, Exporters: raw.Exporters, Ack: raw.Ack}, nil
+	return NodeMetrics{Version: raw.Version, Exporters: raw.Exporters, NICs: raw.NICs, Ack: raw.Ack}, nil
 }

@@ -16,8 +16,9 @@ import (
 //	全 ACK 标 active；180s 未全 ACK：标 partial 回告警（保留运行，差异窗口记录）。
 //	etcd 发布失败即拒绝变更 —— 对应 etcd 多数派丢失时"集群只读保护"（docs/dd/07 §7）。
 //
-// PG 补偿重试：发布失败时版本记录标 failed，内存重试队列退避重投；
-// TODO(M2)：持久化补偿队列（docs/dd/07 §1 "失败补偿重试队列"）。
+// PG 持久化补偿重试（docs/dd/07 §1 "失败补偿重试队列"）：发布失败版本标 failed +
+// 落 outbox（migration 0002 config_outbox）→ Run 循环按指数退避重投 → 成功关单转
+// published 并恢复 ACK 跟踪，或人工取消关单；Master 重启扫描 pending 续补。
 
 // VersionState —— 版本状态。
 type VersionState string
@@ -86,6 +87,16 @@ type CmdSink interface {
 	SendReload(ctx context.Context, nodeID, cmdID, scope string, version uint64) error
 }
 
+// Observability —— 发布链路可观测钩子（Prometheus 指标由装配层注入实现；nil 忽略）。
+type Observability interface {
+	// PublishAttempt 每次 etcd 发布尝试（首投与补偿重投）后回调。
+	PublishAttempt(scope string, err error, elapsed time.Duration)
+	// AckPartial ACK 超时标 partial 时回调。
+	AckPartial(scope string, version uint64, acked, required int)
+	// OutboxDepth 补偿队列 pending 深度采样（每轮扫描回调一次）。
+	OutboxDepth(pending int)
+}
+
 // Options —— Store 装配项。
 type Options struct {
 	KeepVersions int           // 每作用域保留版本数（hld/07 §4：最近 20）
@@ -95,6 +106,16 @@ type Options struct {
 	CmdSink      CmdSink
 	Validators   map[string]Validator
 	Now          func() time.Time
+	// Outbox —— 持久化补偿队列（nil = 内存实现，仅开发模式）
+	Outbox OutboxStore
+	// PollEvery —— 补偿扫描周期（默认 500ms）
+	PollEvery time.Duration
+	// RetryBase / RetryMax —— 重投指数退避基数与上限（默认 1s / 5min：
+	// 1s→2s→4s→…→封顶 5min）
+	RetryBase time.Duration
+	RetryMax  time.Duration
+	// Obs —— 可观测钩子（nil 忽略）
+	Obs Observability
 }
 
 // Validator —— 作用域数据校验函数。
@@ -123,6 +144,18 @@ func (o *Options) fill() {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
+	if o.Outbox == nil {
+		o.Outbox = NewMemOutbox()
+	}
+	if o.PollEvery <= 0 {
+		o.PollEvery = 500 * time.Millisecond
+	}
+	if o.RetryBase <= 0 {
+		o.RetryBase = time.Second
+	}
+	if o.RetryMax <= 0 {
+		o.RetryMax = 5 * time.Minute
+	}
 }
 
 // ErrReadOnly —— 集群只读保护（非 leader / etcd 不可用）。
@@ -132,10 +165,10 @@ var ErrReadOnly = errors.New("cluster is read-only: config changes rejected")
 type Store struct {
 	versions VersionsStore
 	opts     Options
+	outbox   OutboxStore
 
 	mu       sync.Mutex
 	trackers map[string]*ackTracker // scope → 进行中的 ACK 跟踪
-	retry    chan Version
 	closed   chan struct{}
 }
 
@@ -145,42 +178,100 @@ func NewStore(versions VersionsStore, opts Options) *Store {
 	if opts.Validators == nil {
 		opts.Validators = DefaultValidators()
 	}
-	s := &Store{
+	return &Store{
 		versions: versions,
 		opts:     opts,
+		outbox:   opts.Outbox,
 		trackers: map[string]*ackTracker{},
-		retry:    make(chan Version, 64),
 		closed:   make(chan struct{}),
 	}
-	return s
 }
 
-// Run —— 补偿重试循环（etcd 发布失败重投；docs/dd/07 §1）。
+// Run —— 补偿重试循环：周期扫描 outbox pending（Master 重启扫描 pending 续补），
+// 到期条目重投 etcd；成功关单转 published，失败按指数退避顺延（docs/dd/07 §1）。
 func (s *Store) Run(ctx context.Context) {
+	t := time.NewTicker(s.opts.PollEvery)
+	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-s.closed:
 			return
-		case v := <-s.retry:
-			time.Sleep(2 * time.Second) // 固定退避（TODO(M2)：指数退避+持久队列）
-			env := Envelope{Version: v.Version, UpdatedAt: s.opts.Now(), Data: v.DataJSON}
-			if err := s.opts.Publisher.Publish(ctx, v.Scope, env); err != nil {
-				log.Printf(`{"level":"error","module":"master.config","msg":"publish retry failed","scope":%q,"version":%d,"err":%q}`,
-					v.Scope, v.Version, err.Error())
-				select {
-				case s.retry <- v:
-				default:
-				}
-				continue
-			}
-			_ = s.versions.SetVersionState(ctx, v.Scope, v.Version, VersionPublished,
-				AckSummary{Required: v.Required})
-			s.beginAckWatch(ctx, v.Scope, v.Version, v.Required)
-			s.dispatchReload(ctx, v.Scope, v.Version, v.Required)
+		case <-t.C:
+			s.processDue(ctx)
 		}
 	}
+}
+
+// processDue 扫描到期补偿单并重投。
+func (s *Store) processDue(ctx context.Context) {
+	now := s.opts.Now()
+	entries, err := s.outbox.PendingDue(ctx, now, 16)
+	if err != nil {
+		log.Printf(`{"level":"error","module":"master.config","msg":"outbox scan","err":%q}`, err.Error())
+		return
+	}
+	if s.opts.Obs != nil {
+		if n, err := s.outbox.PendingCount(ctx); err == nil {
+			s.opts.Obs.OutboxDepth(n)
+		}
+	}
+	for _, e := range entries {
+		s.retryOne(ctx, e)
+	}
+}
+
+// retryOne 单条补偿重投。
+func (s *Store) retryOne(ctx context.Context, e OutboxEntry) {
+	env := Envelope{Version: e.Version, UpdatedAt: s.opts.Now(), Data: e.Payload}
+	start := s.opts.Now()
+	err := s.opts.Publisher.Publish(ctx, e.Scope, env)
+	elapsed := s.opts.Now().Sub(start)
+	if s.opts.Obs != nil {
+		s.opts.Obs.PublishAttempt(e.Scope, err, elapsed)
+	}
+	if err != nil {
+		next := s.opts.Now().Add(s.backoff(e.Attempt + 1))
+		if merr := s.outbox.MarkAttempt(ctx, e.ID, next, err.Error()); merr != nil {
+			log.Printf(`{"level":"error","module":"master.config","msg":"outbox mark attempt","id":%d,"err":%q}`, e.ID, merr.Error())
+		}
+		log.Printf(`{"level":"warn","module":"master.config","msg":"publish retry failed","scope":%q,"version":%d,"attempt":%d,"next_retry":%q,"err":%q}`,
+			e.Scope, e.Version, e.Attempt+1, next.Format(time.RFC3339), err.Error())
+		return
+	}
+	if err := s.outbox.MarkDone(ctx, e.ID); err != nil {
+		log.Printf(`{"level":"error","module":"master.config","msg":"outbox close","id":%d,"err":%q}`, e.ID, err.Error())
+	}
+	// 关单 → 版本转 published + 恢复 ACK 跟踪 + reload 触发（与首投成功同路径）
+	_ = s.versions.SetVersionState(ctx, e.Scope, e.Version, VersionPublished,
+		AckSummary{Required: e.Required})
+	s.beginAckWatch(ctx, e.Scope, e.Version, e.Required)
+	s.dispatchReload(ctx, e.Scope, e.Version, e.Required)
+	log.Printf(`{"level":"info","module":"master.config","msg":"publish retry recovered","scope":%q,"version":%d,"attempts":%d}`,
+		e.Scope, e.Version, e.Attempt+1)
+}
+
+// backoff 第 attempt 次重试的退避时长：base×2^(attempt-1)，封顶 RetryMax。
+func (s *Store) backoff(attempt int) time.Duration {
+	d := s.opts.RetryBase
+	for i := 1; i < attempt; i++ {
+		d *= 2
+		if d >= s.opts.RetryMax {
+			return s.opts.RetryMax
+		}
+	}
+	return d
+}
+
+// CancelPending 人工取消待重试补偿单（版本保持 failed；经重发新版本恢复，docs/dd/07 §1）。
+func (s *Store) CancelPending(ctx context.Context, scope string, version uint64) error {
+	return s.outbox.Cancel(ctx, scope, version)
+}
+
+// PendingOutbox 待重试补偿单（运维查询）。
+func (s *Store) PendingOutbox(ctx context.Context) ([]OutboxEntry, error) {
+	return s.outbox.ListPending(ctx)
 }
 
 // Close 停止补偿循环与底层存储。
@@ -189,6 +280,9 @@ func (s *Store) Close() error {
 	case <-s.closed:
 	default:
 		close(s.closed)
+	}
+	if err := s.outbox.Close(); err != nil {
+		return err
 	}
 	return s.versions.Close()
 }
@@ -236,16 +330,25 @@ func (s *Store) Publish(ctx context.Context, scope string, data []byte, actor st
 	if err := s.versions.SaveVersion(ctx, v, AckSummary{Required: targets}); err != nil {
 		return 0, fmt.Errorf("save version for %s: %w", scope, err)
 	}
-	// ② etcd 发布（失败 → 只读保护语义 + 补偿重试）
+	// ② etcd 发布（失败 → 只读保护语义 + outbox 持久化补偿）
 	env := Envelope{Version: next, UpdatedAt: s.opts.Now(), Data: v.DataJSON}
-	if err := s.opts.Publisher.Publish(ctx, scope, env); err != nil {
+	pubStart := s.opts.Now()
+	pubErr := s.opts.Publisher.Publish(ctx, scope, env)
+	if s.opts.Obs != nil {
+		s.opts.Obs.PublishAttempt(scope, pubErr, s.opts.Now().Sub(pubStart))
+	}
+	if pubErr != nil {
 		_ = s.versions.SetVersionState(ctx, scope, next, VersionFailed, AckSummary{})
-		select {
-		case s.retry <- v:
-		default:
-			log.Printf(`{"level":"error","module":"master.config","msg":"retry queue full","scope":%q}`, scope)
+		entry := OutboxEntry{
+			Scope: scope, Version: next, Payload: v.DataJSON, Required: targets,
+			NextRetry: s.opts.Now().Add(s.backoff(1)),
 		}
-		return 0, fmt.Errorf("publish %s v%d to etcd: %w", scope, next, err)
+		if err := s.outbox.Enqueue(ctx, &entry); err != nil {
+			// PG 亦不可用（灾难场景）：只读保护语义不变，显式告警日志等待人工介入
+			log.Printf(`{"level":"error","module":"master.config","msg":"outbox enqueue failed","scope":%q,"version":%d,"err":%q}`,
+				scope, next, err.Error())
+		}
+		return 0, fmt.Errorf("publish %s v%d to etcd: %w", scope, next, pubErr)
 	}
 	// ③ ACK 跟踪 + reload 触发
 	s.beginAckWatch(ctx, scope, next, targets)
@@ -313,6 +416,9 @@ func (s *Store) ackTimeout(scope string, version uint64) {
 	t.mu.Unlock()
 	_ = s.versions.SetVersionState(context.Background(), scope, version, VersionPartial,
 		AckSummary{Required: required, Acked: acked})
+	if s.opts.Obs != nil {
+		s.opts.Obs.AckPartial(scope, version, len(acked), len(required))
+	}
 	log.Printf(`{"level":"warn","module":"master.config","msg":"config ack timeout","scope":%q,"version":%d,"acked":%d,"required":%d}`,
 		scope, version, len(acked), len(required))
 }

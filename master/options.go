@@ -20,6 +20,12 @@ type Options struct {
 	KafkaBrokers []string
 	// JWTSecret —— HS256 共享密钥（Master 与网关，docs/dd/07 §4）
 	JWTSecret string
+	// JWTRS256KeyPEM —— RS256 私钥 PEM 内容（LUCID_MASTER_JWT_RS256_PRIVATE_KEY；
+	// 与 JWTRS256KeyFile 二选一。配置后 access/refresh 改用 RS256 签发，
+	// 公钥经 GET /api/v1/auth/jwks 暴露供 LucidBGP 验签，docs/dd/07 §4）
+	JWTRS256KeyPEM string
+	// JWTRS256KeyFile —— RS256 私钥 PEM 文件路径（LUCID_MASTER_JWT_RS256_KEY_FILE）
+	JWTRS256KeyFile string
 	// AdminUser / AdminPassword —— 首次引导的平台管理员（docs/dd/07 §4 预置角色）
 	AdminUser     string
 	AdminPassword string
@@ -70,6 +76,12 @@ func FromEnv() Options {
 	}
 	if v := os.Getenv("LUCID_MASTER_JWT_SECRET"); v != "" {
 		o.JWTSecret = v
+	}
+	if v := os.Getenv("LUCID_MASTER_JWT_RS256_PRIVATE_KEY"); v != "" {
+		o.JWTRS256KeyPEM = v
+	}
+	if v := os.Getenv("LUCID_MASTER_JWT_RS256_KEY_FILE"); v != "" {
+		o.JWTRS256KeyFile = v
 	}
 	if v := os.Getenv("LUCID_MASTER_ADMIN_USER"); v != "" {
 		o.AdminUser = v

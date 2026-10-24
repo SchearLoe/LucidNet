@@ -17,11 +17,16 @@ func (s *Server) routes(mux *http.ServeMux) {
 		}
 		writeOK(w, map[string]bool{"leader": true})
 	})
+	// Prometheus 抓取（docs/11 §9；无鉴权——仅聚合指标，不落节点 ID/IP 等明细）
+	mux.Handle("GET /metrics", s.metricsHandler())
 
 	// 认证
 	mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
 	mux.HandleFunc("POST /api/v1/auth/refresh", s.handleRefresh)
 	mux.Handle("GET /api/v1/auth/me", s.withAuth("overview:read", s.handleMe))
+	// JWKS 公钥（RS256 未配置时为空集；公钥属公开信息不鉴权，LucidBGP 验签入口，dd/07 §4）
+	mux.HandleFunc("GET /api/v1/auth/jwks", s.handleJWKS)
+	mux.HandleFunc("GET /api/v1/auth/jwks.pem", s.handleJWKSPem)
 
 	// 节点与拓扑（集群状态查询 API）
 	mux.Handle("GET /api/v1/admin/nodes", s.withAuth("admin:read", s.handleListNodes))
@@ -51,6 +56,10 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/admin/versions", s.withAuth("admin:read", s.handleListVersions))
 	mux.Handle("GET /api/v1/admin/versions/view", s.withAuth("admin:read", s.handleGetVersion))
 	mux.Handle("POST /api/v1/admin/versions/rollback", s.withAuth("admin:manage", s.handleRollback))
+
+	// 发布补偿队列（PG outbox；docs/dd/07 §1）
+	mux.Handle("GET /api/v1/admin/outbox", s.withAuth("admin:read", s.handleListOutbox))
+	mux.Handle("POST /api/v1/admin/outbox/cancel", s.withAuth("admin:manage", s.handleCancelOutbox))
 
 	// RBAC / 租户
 	mux.Handle("GET /api/v1/admin/tenants", s.withAuth("admin:read", s.handleListTenants))

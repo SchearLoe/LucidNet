@@ -12,6 +12,7 @@ import (
 	"github.com/SchearLoe/lucidnet/master/internal/audit"
 	"github.com/SchearLoe/lucidnet/master/internal/auth"
 	"github.com/SchearLoe/lucidnet/master/internal/config"
+	"github.com/SchearLoe/lucidnet/master/internal/metrics"
 	"github.com/SchearLoe/lucidnet/master/internal/rbac"
 	"github.com/SchearLoe/lucidnet/master/internal/registry"
 )
@@ -30,6 +31,10 @@ type Deps struct {
 	Hub      CmdHub
 	Leader   func() bool
 	Now      func() time.Time
+	// Metrics —— Prometheus 指标（可选；nil 时 REST 请求计数关闭）
+	Metrics *metrics.Metrics
+	// MetricsHandler —— /metrics 抓取端点（装配层注入 metrics.Handler()）
+	MetricsHandler http.Handler
 }
 
 // CmdHub —— 排水命令触发（避免依赖 internal/rpc 全量）。
@@ -65,7 +70,52 @@ func NewServer(d Deps) *Server {
 
 // Handler 返回带中间件的根 Handler。
 func (s *Server) Handler() http.Handler {
-	return s.withRecover(s.mux)
+	return s.withMetrics(s.withRecover(s.mux))
+}
+
+// ---------- 可观测中间件（docs/11 §9：REST 请求计数按编译期路由模式） ----------
+
+// withMetrics 按路由模式计数 REST 请求（route = ServeMux 编译期模式，如
+// "GET /api/v1/admin/nodes/{id}"——无动态值非高基数；/metrics 自抓取不计）。
+func (s *Server) withMetrics(next http.Handler) http.Handler {
+	if s.d.Metrics == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, pattern := s.mux.Handler(r)
+		if pattern == "" {
+			pattern = "unmatched"
+		}
+		if pattern == "GET /metrics" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		rec := &statusWriter{ResponseWriter: w, code: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		s.d.Metrics.AddRESTRequest(pattern, rec.code)
+	})
+}
+
+// statusWriter 捕获响应状态码。
+type statusWriter struct {
+	http.ResponseWriter
+	code int
+}
+
+// WriteHeader 实现 http.ResponseWriter。
+func (w *statusWriter) WriteHeader(code int) {
+	w.code = code
+	w.ResponseWriter.WriteHeader(code)
+}
+
+// metricsHandler Prometheus 抓取端点（装配层未注入时 501）。
+func (s *Server) metricsHandler() http.Handler {
+	if s.d.MetricsHandler != nil {
+		return s.d.MetricsHandler
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeErr(w, http.StatusNotImplemented, 501, "metrics disabled")
+	})
 }
 
 // ---------- 响应信封（docs/00 §6 {code,msg,data}） ----------

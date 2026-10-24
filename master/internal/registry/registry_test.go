@@ -132,6 +132,130 @@ func TestWeight(t *testing.T) {
 	}
 }
 
+// TestNICFromMbps —— proto NicSpec（Mbps 口径）→ registry NIC（Gbps 口径）换算：
+// 1 Gbps = 1000 Mbps，向下取整；不足 1 Gbps 记 0（权重计算忽略，docs/09 §3 NicSpec）。
+func TestNICFromMbps(t *testing.T) {
+	cases := []struct {
+		mbps uint32
+		want uint32
+	}{
+		{25000, 25},   // 25G 基准口
+		{100000, 100}, // 100G
+		{1000, 1},     // 1G
+		{400, 0},      // 不足 1G → 0（权重忽略）
+		{0, 0},        // 链路未协商
+	}
+	for _, c := range cases {
+		nic := NICFromMbps("eth0", c.mbps)
+		if nic.SpeedGbps != c.want {
+			t.Fatalf("NICFromMbps(%d).SpeedGbps = %d, want %d", c.mbps, nic.SpeedGbps, c.want)
+		}
+		if nic.Name != "eth0" {
+			t.Fatalf("name = %q", nic.Name)
+		}
+	}
+}
+
+// TestWeightNICsConsumeAndFallback —— 注册消费 NodeInfo.nics 进权重：
+// Mbps 换算聚合（取最大上行口）与未上报 25G 基准兜底（向后兼容旧版 Broker）。
+func TestWeightNICsConsumeAndFallback(t *testing.T) {
+	cases := []struct {
+		name string
+		n    Node
+		want float64
+	}{
+		{"25G 上报 = 基准", Node{Cores: 24, NICs: []NIC{NICFromMbps("eth0", 25000)}}, 1.0},
+		{"100G 上报 = 4 倍", Node{Cores: 24, NICs: []NIC{NICFromMbps("eth0", 100000)}}, 4.0},
+		{"2 口聚合取最大", Node{Cores: 24, NICs: []NIC{
+			NICFromMbps("eth0", 25000), NICFromMbps("eth1", 50000)}}, 2.0},
+		{"不足 1G 忽略 → 兜底", Node{Cores: 24, NICs: []NIC{NICFromMbps("mgmt0", 400)}}, 1.0},
+		{"零速率口忽略", Node{Cores: 24, NICs: []NIC{
+			{Name: "eth0", SpeedGbps: 0}, NICFromMbps("eth1", 25000)}}, 1.0},
+		{"空 NIC 列表兜底", Node{Cores: 24, NICs: []NIC{}}, 1.0},
+		{"未上报 nics 兜底（旧版 Broker）", Node{Cores: 24}, 1.0},
+	}
+	for _, c := range cases {
+		if got := c.n.Weight(); got != c.want {
+			t.Fatalf("%s: weight = %f, want %f", c.name, got, c.want)
+		}
+	}
+}
+
+// TestRegisterConsumesNICs —— 注册落 NIC 档案（PG nodes.nics 同构），心跳 nics 变化
+// 顺带更新并触发权重重算；无变化幂等。
+func TestRegisterConsumesNICs(t *testing.T) {
+	clock := &fakeClock{t: time.Unix(1_800_000_000, 0)}
+	changes := 0
+	reg := NewRegistry(NewMemStore(), Options{
+		Now:      clock.Now,
+		OnChange: func() { changes++ },
+	})
+	ctx := context.Background()
+	n, err := reg.Register(ctx, Node{
+		ID: "c1", Role: RoleCollector, Cores: 24,
+		NICs: []NIC{NICFromMbps("eth0", 50000)}, // 50G → weight = 2.0
+	})
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if got := n.Weight(); got != 2.0 {
+		t.Fatalf("weight after register = %f, want 2.0", got)
+	}
+	stored, _ := reg.Get(ctx, "c1")
+	if len(stored.NICs) != 1 || stored.NICs[0].Name != "eth0" || stored.NICs[0].SpeedGbps != 50 {
+		t.Fatalf("stored nics = %+v", stored.NICs)
+	}
+	if changes != 1 {
+		t.Fatalf("changes = %d, want 1 (register)", changes)
+	}
+	// 心跳上报相同网卡 → 幂等（不触发重算）
+	if err := reg.UpdateNICs(ctx, "c1", []NIC{{Name: "eth0", SpeedGbps: 50}}); err != nil {
+		t.Fatalf("update nics same: %v", err)
+	}
+	if changes != 1 {
+		t.Fatalf("changes after idempotent update = %d, want 1", changes)
+	}
+	// 心跳上报网卡升级 → 档案更新 + 权重重算
+	if err := reg.UpdateNICs(ctx, "c1", []NIC{NICFromMbps("eth0", 100000)}); err != nil {
+		t.Fatalf("update nics: %v", err)
+	}
+	stored, _ = reg.Get(ctx, "c1")
+	if got := stored.Weight(); got != 4.0 {
+		t.Fatalf("weight after nic upgrade = %f, want 4.0", got)
+	}
+	if changes != 2 {
+		t.Fatalf("changes = %d, want 2", changes)
+	}
+	// 空上报忽略（保留档案，25G 兜底语义不被清空）
+	if err := reg.UpdateNICs(ctx, "c1", nil); err != nil {
+		t.Fatalf("update nics empty: %v", err)
+	}
+	stored, _ = reg.Get(ctx, "c1")
+	if len(stored.NICs) != 1 || stored.Weight() != 4.0 {
+		t.Fatalf("empty update must not clear nics: %+v", stored)
+	}
+	// 未注册节点报错
+	if err := reg.UpdateNICs(ctx, "ghost", []NIC{{Name: "eth0", SpeedGbps: 25}}); err == nil {
+		t.Fatal("update nics for unknown node accepted")
+	}
+}
+
+// TestParseMetricsJSONNICs —— metrics_json.nics 解析（心跳网卡变化上报契约）。
+func TestParseMetricsJSONNICs(t *testing.T) {
+	m, err := ParseMetricsJSON([]byte(`{"version":"v1","nics":[{"name":"eth0","speed_gbps":25}]}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(m.NICs) != 1 || m.NICs[0].Name != "eth0" || m.NICs[0].SpeedGbps != 25 {
+		t.Fatalf("nics = %+v", m.NICs)
+	}
+	// 空/旧版载荷无 nics 键 → 空切片（不触发档案更新）
+	m, err = ParseMetricsJSON([]byte(`{"version":"v0"}`))
+	if err != nil || len(m.NICs) != 0 {
+		t.Fatalf("legacy payload nics = %+v err = %v", m.NICs, err)
+	}
+}
+
 // TestExporterLifecycle —— 观测窗口与 pin。
 func TestExporterLifecycle(t *testing.T) {
 	clock := &fakeClock{t: time.Unix(1_800_000_000, 0)}
