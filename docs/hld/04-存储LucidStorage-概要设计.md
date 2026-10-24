@@ -26,7 +26,7 @@
 
 | 接口 | 消费方 | 说明 |
 |---|---|---|
-| `Inserter.Write(batch)` gRPC | Analytics / Collector 模板流 | 批量写，幂等批次号 |
+| Inserter（Kafka 消费组） | 消费 `flows.raw`/`flows.aggr.minute`/`attacks.minutes`/`alarms` | CH 写入**唯一通道**：分片路由+批量落表，幂等批次号（09 契约 §2/§8） |
 | `QueryService` gRPC→REST 网关 | Console | 明细查询（R6，强约束）/聚合查询/攻击查询 |
 | `ExportService` | Console | 异步导出任务（R5） |
 

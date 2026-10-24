@@ -51,7 +51,9 @@
 ```
 gobgpd(gRPC :50051) ── WatchEvent(best-path) ──► Feeder
                                                 ├─ 双栈 radix RIB（v4/v6，全表 ≤150w 前缀，内存 ≤3GB）
-                                                │   └─ gRPC Lookup(ip)→{asn,prefix,peer_as,ts}  ← Collector 缓存快照源
+                                                │   └─ gRPC 服务 RibNameLookup（:9131）：
+                                                │       Lookup(ip)→{asn,prefix,peer_as,ts}
+                                                │       GetSnapshot() / WatchSnapshot()   ← Collector 缓存快照源
                                                 ├─ 快照接口 GetSnapshot()（每日+变更推 Collector）
                                                 └─ 增量 → Kafka bgp.updates（路由-流量关联分析用，M2+）
 ```

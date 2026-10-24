@@ -43,7 +43,7 @@
 - 300 客户×1000 条：哈希/radix 合计内存 <10MB，查询 ≤0.5µs；命中即写 `zone_id`，未命中 0。
 - 一条 IP 同属多 zone：配置校验禁止重叠（Master 保存时校验，冲突返回错误）；强制场景允许 `zone_priority`，取小 id。
 - 变更生效：etcd watch → 原子换树（copy-on-write 指针替换），≤2s。
-- dst 命中优先（客户=被监测方，攻击场景看目的侧）；`zone_match=dst|src|both` 全局可配，默认 dst。
+- 匹配面全局可配 `zone_match=dst|src`（默认 dst：客户=被监测方，攻击场景看目的侧；src 模式用于以"源客户"为监测对象）。命中写 `zone_id` + `zone_side`（1=dst 命中 2=src 命中），**一条记录只标一个客户域**——方向推导的唯一依据，见 09 契约 §3。
 
 ### 3.4 接口角色打标（R4）
 - 本地缓存 PG `interfaces` 快照（device_id+ifIndex → role），写 `if_role` 位图（bit0 in 边界 / bit1 out 边界）。
@@ -84,7 +84,7 @@
 - **对账校验**（防 ifIndex 漂移）：每日对每设备取 Top 流量 ifIndex 的 flow 聚合速率 vs SNMP 同 ifIndex 速率，皮尔逊相关 <0.5 或接口名比对失败 → 告警 `ifindex_mismatch{device}` 转人工映射表 `manual_if_map`。
 
 ### 5.3 分析联动（R4 的"分析时去除互联"）
-- Analytics 消费 FlowRecord 时按 `if_role` 位图过滤：`internal_exclude=true`（默认）时丢弃 in/out 任一侧为互联接口的记录；该开关全局+按报表级可覆盖（个别"全网总量"视图需含互联时使用）。
+- Analytics 消费 FlowRecord 时按 `if_role` 位图过滤：`internal_exclude=true`（默认）时丢弃 **in 与 out 均为 internal** 的记录——纯互联链路流量在互联两端设备各导出一次、双计；而 boundary↔internal 是客户↔骨干的正常路径，**保留**（语义裁定见 09 契约 §9-④）。开关全局+按报表级可覆盖（个别"全网总量"视图需含互联时使用）。
 
 ## 6. 自监控与运维
 

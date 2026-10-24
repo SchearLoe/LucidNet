@@ -32,7 +32,7 @@
 
 | 接口 | 方向 | 说明 |
 |---|---|---|
-| gRPC `BrokerAdmin` | Master→Broker | WatchRoutes（哈希表）、WatchForwardRules（R1 规则） |
+| etcd watch | Master→Broker | `/lucid/assign/flow`（哈希表）、`/lucid/forward/rules`（R1 规则）热更新；Master gRPC 仅节点注册/心跳（见 09 契约 §5） |
 | Prometheus `/metrics` | 监控 | 每规则/每目的地收发速率、丢弃、再采样比例 |
 | UDP 9995/9996/6343/2055… | exporters→Broker | 流协议入口（端口可配） |
 

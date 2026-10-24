@@ -11,13 +11,13 @@
 ## 2. 分钟聚合器（Aggregator）
 
 ### 2.1 聚合维度与度量
-维度见 00 §4 `aggr_minute`；分组键哈希（xxhash64）→ 本地 map 累加 → 分钟翻转（:00+90s grace 收迟到的同分钟记录）→ 批量写 CH（经 Storage 的 inserter 接口）。
+维度见 00 §4 `aggr_minute`；分组键哈希（xxhash64）→ 本地 map 累加 → 分钟翻转（:00+90s grace 收迟到的同分钟记录）→ 批量发布 Kafka `flows.aggr.minute`（key=exporter，由 Storage 的 Inserter 消费落 CH，09 契约 §2）。
 
 ### 2.2 互联接口过滤（R4）
-聚合入口统一执行：`internal_exclude=true`（默认，etcd 全局配置）→ 丢弃 `if_role` 位图中 in 或 out 任一侧为 internal 的记录；全局视图算子（如"全网总量"看板）订阅 `internal_exclude=false` 的旁路（成本 ×1.3，仅全局维度启用，zone 维度不需要）。
+聚合入口统一执行：`internal_exclude=true`（默认，etcd 全局配置）→ 丢弃 `if_role` 位图中 **in 与 out 均为 internal** 的记录（纯互联链路流量，双计来源；boundary↔internal 保留，语义裁定见 09 契约 §9-④）；全局视图算子（如"全网总量"看板）订阅 `internal_exclude=false` 的旁路（成本 ×1.3，仅全局维度启用，zone 维度不需要）。
 
 ### 2.3 方向语义
-客户视角：`in`=从 boundary 接口流入（out_if 命中客户绑定接口或 zone 命中 dst）→ 客户收到的流量；`out` 反之。实现：zone_id>0 且 dst 命中 → in；src 命中 → out；二者同区（区内互访）单独计 `intra`（默认不计入客户总量）。
+客户视角（以采集侧 `zone_side` 为准，Analytics 不做二次猜测，见 09 契约 §3）：`zone_side=1`（dst 命中，流量流向该客户）→ 计 `in`；`zone_side=2`（src 命中，该客户发出）→ 计 `out`。区内互访（`zone_side=1` 且源 IP 亦命中同 zone，采集侧可选二跳查询标注，默认关闭）单独计 `intra`（默认不计入客户总量）。
 
 ## 3. Zone 秒级检测引擎（R2 核心）
 
@@ -98,7 +98,7 @@ CANDIDATE ─(规则连续命中 2/3 s)─► CONFIRMED ─(连续 120s 无命�
 - 证据快照（Redis, TTL 24h）：Top 源 100（IP/pps/bps）、端口分布、flag 比、熵曲线、基线对照曲线。
 
 ### 6.2 分钟详情（AttackMinute，R5）
-- 攻击期间每分钟固化一行（00 §2.3）：bps/pps（in/out 双向）、new_flows、syn/udp 比、Top 源/端口；写 CH `attack_minutes`。
+- 攻击期间每分钟固化一行（00 §2.3）：bps/pps（in/out 双向）、new_flows、syn/udp 比、Top 源/端口；批量发布 Kafka `attacks.minutes`（由 Storage Inserter 落 CH `attack_minutes`）。
 - 停止条件后补最后一行 `end` 标记；Console 攻击详情页按分钟表格+曲线展示，"导出原始日志"按钮携带 `(zone, 时间窗, Top源可选)` 跳转 Storage 导出任务（dd/04 §5，产出格式化文本）。
 
 ### 6.3 处置联动（R9）

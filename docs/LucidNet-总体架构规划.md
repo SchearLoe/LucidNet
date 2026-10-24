@@ -1,9 +1,10 @@
 # LucidNet 网络流量智能分析平台 — 总体架构规划
 
-> 版本：v0.3｜日期：2026-10-24
+> 版本：v0.3.1｜日期：2026-10-24
 > v0.1 → v0.2：吸收 9 项细化需求（R1–R9，见需求追踪矩阵）；新增 LucidBGP 模块；存储保留期调整为**明细 15 天**并重算容量；文档体系拆分为各模块概要设计 + 详细设计。
 > v0.2 → v0.2.1：§3 架构图重绘（Mermaid），新增"一条流记录的旅程"数据流说明、物理部署视图、分流层论证与部署形态。
 > v0.2.1 → v0.3：新增 **08 LucidDeploy（部署与升级）**模块：制品/版本规范、lucidctl 一键安装、滚动升级/灰度/回滚、Console 部署中心；许可确立为 AGPL-3.0-only + 商业双许可。
+> v0.3 → v0.3.1：跨模块接口核对，修正 6 处不一致（明细落库通道/zone_side/互联过滤语义/Broker 配置通道/RIB 服务命名/baseline DDL），新增 **09 模块间接口契约**（并行开发唯一权威）。
 > 定位：基于 NetStream/NetFlow/IPFIX/sFlow、SNMP、BGP/BMP 多源数据，提供**网络流洞察、流量波动分析、秒级攻击检测与处置闭环**的一体化产品。
 > 对标：Genie Networks GenieATM/FLB；参考 Akvorado（开源架构）、Gigamon（报文侧分流）。
 > 性能目标：**10 台服务器集群 ≥100 万 flows/s 持续处理，IPv4/IPv6 双栈**。
@@ -173,6 +174,7 @@ flowchart TB
 | 06 | LucidBGP | BGP 路由管理与处置（rsbgp-console 改名） | docs/hld/06 | docs/dd/06 |
 | 07 | LucidMaster | 集群管理/配置/RBAC/自监控 | docs/hld/07 | docs/dd/07 |
 | 08 | LucidDeploy | 制品规范/一键安装/滚动升级/回滚/部署中心页面 | docs/hld/08 | docs/dd/08 |
+| 09 | 接口契约 | 模块间数据接口唯一权威（Kafka/gRPC/etcd/PG/CH/端口/裁定记录） | — | docs/09-模块间接口契约.md |
 
 ## 5. 关键设计决策（摘要，细节见各模块文档）
 

@@ -15,9 +15,10 @@ STORAGE POLICY hot_cold = hot, cold   -- TTL 到期自动迁移（move_factor 0.
 - 物化视图链：`flows_raw → mv_aggr_minute → mv_aggr_hour`（-State 聚合函数链式 MergeState）；**互联过滤不进入物化视图**（原始表保留全量，R4 过滤是查询/分析语义，数据层不物理删除——取证需要全量）。
 - 副本：ReplicatedMergeTree，`insert_quorum=1, insert_quorum_parallel=1`（吞吐优先）；`max_part_delay_for_merge` 监控。
 
-### 1.3 分片路由
-- `Inserter` 维持 `(day, hash64(exporter)) → shard` 映射，写各分片本地表（HTTP native 协议批量 `INSERT SELECT` 不用，直接 binary block）；
-- 批次：≥50,000 行或 2s flush（单分片 <10 并发 insert）；幂等批次号写入 block info 的额外列 `_batch_id UInt64`（ReplacingMergeTree 语义不适用于明细——明细不重写，幂等仅靠批次追踪表 PG `export_batches`，失败整批重发）。
+### 1.3 Inserter（CH 写入唯一通道：Kafka 消费组，部署于各 CH 节点，09 契约 §2）
+- 消费组：`flows.raw`（→ flows_raw **明细 15 天落库**，R6）、`flows.aggr.minute`（→ aggr_minute，物化视图上卷 aggr_hour）、`attacks.minutes`（→ attack_minutes）、`alarms`（→ attacks 与告警历史，取 Alarm/AttackEvent 子集）；与 Analytics 消费组相互独立、lag 独立。
+- 分片路由：按消息 key 维持 `(day, hash64(exporter)) → shard` 映射，写各分片本地表（native binary block，不用 HTTP INSERT）。
+- 批次：≥50,000 行或 2s flush（单分片 <10 并发 insert）；幂等：PG `export_batches` 批次追踪表 + 消费 checkpoint，失败整批重发。
 
 ## 2. 明细查询（R6：15 天 Web 条件查询）
 

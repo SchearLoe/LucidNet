@@ -21,6 +21,7 @@
 docs/
 ├── LucidNet-总体架构规划.md        总体架构 v0.2（需求追踪矩阵 R1-R9、容量规划、里程碑）
 ├── 00-公共数据模型与接口规范.md     proto / Kafka topic / ClickHouse DDL / REST 约定
+├── 09-模块间接口契约.md          跨模块接口唯一权威（Kafka/gRPC/etcd/PG/端口/裁定记录）
 ├── hld/ 01~08                     各模块概要设计
 │   ├── 01-汇聚分流LucidBroker       FLB 流负载均衡 + 多目的转发/再采样
 │   ├── 02-采集解析LucidCollector    流解码归一化富化 + SNMP/接口角色识别

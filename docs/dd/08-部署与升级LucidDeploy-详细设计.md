@@ -61,7 +61,8 @@ systemd: lucid-agent.service（随系统起）；
 |---|---|---|---|
 | 9100 | lucid-agent gRPC | 9000/8123/9009 | ClickHouse native/HTTP/interserver |
 | 2055/9995/9996/6343 | Broker/Collector UDP 业务口 | 9092 | Kafka |
-| 9110–9160 | 各组件 metrics（步进 10） | 2379/2380 | etcd |
+| 9131 | RIB Feeder gRPC（RibNameLookup） | 2379/2380 | etcd |
+| 9110–9160 | 各组件 metrics（步进 10，9131 除外） | 8429 | vmagent（预留） |
 | 9140/9141 | Master gRPC/HTTP | 5432 | PostgreSQL |
 | 80/443 | 网关/Console | 8428 | VictoriaMetrics |
 | 18081 | LucidBGP（本机） | 9300/9301 | MinIO API/Console（避开 CH 9000） |

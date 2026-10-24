@@ -9,7 +9,7 @@ lucid-broker
 ├── ingest        N×UDP listener（SO_REUSEPORT，每 CPU 一进程模型：RSS+AFFINITY）
 ├── flb           exporter→collector 分发（一致性哈希）
 ├── forwarder     R1 规则引擎（透传复制 + 代理重编码）
-├── admin         gRPC client：订阅 Master 规则；规则版本化热更新
+├── admin         Master gRPC 注册/心跳 + etcd watch（assign 哈希表 / forward 规则）；版本化热更新
 └── metrics       Prometheus exporter
 ```
 
