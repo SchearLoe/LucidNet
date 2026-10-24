@@ -12,7 +12,7 @@ import (
 )
 
 // JWT 签发/校验（docs/dd/07 §4）：HS256，Master 与网关共享密钥；
-// claims {uid, tenant, roles, exp}。RS256 密钥对（LucidBGP 公钥验签）见 TODO。
+// claims {uid, tenant, roles, perms, exp}。RS256 密钥对（LucidBGP 公钥验签）见 TODO。
 //
 // 说明：MVP 手写 HS256（header.payload.signature，base64url），不引入第三方 JWT 库；
 // 算法白名单只允许 HS256，签名比较用 hmac.Equal 恒时比较。
@@ -31,10 +31,14 @@ const (
 
 // Claims —— JWT 载荷（docs/dd/07 §4）。
 type Claims struct {
-	UID           int64    `json:"uid"`
-	UserName      string   `json:"name"`   // 登录名（审计/回查）
-	Tenant        string   `json:"tenant"` // 平台管理员为空（租户隔离豁免）
-	Roles         []string `json:"roles"`
+	UID      int64    `json:"uid"`
+	UserName string   `json:"name"`   // 登录名（审计/回查）
+	Tenant   string   `json:"tenant"` // 平台管理员为空（租户隔离豁免）
+	Roles    []string `json:"roles"`
+	// Perms —— 角色→权限点展开（<domain>:<action>，支持 * / <domain>:* 通配原样保留，
+	// 匹配语义同 rbac.Allowed）。资源网关（Console）直接校验 token 内 perms，为权威来源；
+	// 未携带（旧 token）时网关按其严格模式自行回退。omitempty：不签发时与旧契约兼容。
+	Perms         []string `json:"perms,omitempty"`
 	PlatformAdmin bool     `json:"platform_admin,omitempty"`
 	Typ           string   `json:"typ"`
 	IssuedAt      int64    `json:"iat"`

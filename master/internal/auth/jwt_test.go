@@ -58,3 +58,55 @@ func TestVerifyExpired(t *testing.T) {
 		t.Fatalf("err = %v, want ErrTokenExpired", err)
 	}
 }
+
+// TestPermsClaimRoundTrip —— perms claim 签发/解析往返；通配项（* / domain:*）
+// 原样保留在 claim 内（展开语义由 rbac.Allowed 在校验侧匹配，docs/11 §8）。
+func TestPermsClaimRoundTrip(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	s := NewSigner("secret", func() time.Time { return now })
+	c := Claims{
+		UID:   9,
+		Roles: []string{"security-operator"},
+		Perms: []string{"overview:read", "zone:*", "attack:handle", "*"},
+		Typ:   TypAccess,
+	}
+	token, err := s.Sign(c)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	got, err := s.Verify(token)
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	want := []string{"overview:read", "zone:*", "attack:handle", "*"}
+	if len(got.Perms) != len(want) {
+		t.Fatalf("perms = %v, want %v", got.Perms, want)
+	}
+	for i := range want {
+		if got.Perms[i] != want[i] {
+			t.Fatalf("perms[%d] = %q, want %q（须保序去重原样保留）", i, got.Perms[i], want[i])
+		}
+	}
+}
+
+// TestPermsClaimOmittedWhenEmpty —— 未签发 perms 时 claim 不出现，旧 token 兼容。
+func TestPermsClaimOmittedWhenEmpty(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	s := NewSigner("secret", func() time.Time { return now })
+	token, err := s.Sign(Claims{UID: 1, Typ: TypAccess})
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	if got, err := s.Verify(token); err != nil || len(got.Perms) != 0 {
+		t.Fatalf("perms = %v err = %v, want empty/nil", got.Perms, err)
+	}
+	// JSON 载荷不含 perms 键（omitempty；网关 PermsKnown 判定依据）
+	parts := strings.Split(token, ".")
+	payload, err := base64urlDecode(parts[1])
+	if err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if strings.Contains(string(payload), `"perms"`) {
+		t.Fatalf("empty perms must be omitted from payload: %s", payload)
+	}
+}

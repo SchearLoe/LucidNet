@@ -11,6 +11,7 @@ message ZoneSpec {
   repeated IpEntry ips = 4;       // ≤1000 条/客户；重叠由 Master 保存时校验禁止
   repeated DeviceIf boundary_ifs = 5; // 可选绑定边界接口（R4 辅助）
   int32  policy_id = 6;           // 检测策略模板
+  string zone_match = 7;          // 命中方向：dst|src（缺省=dst；禁止 both，docs/09 §3）
 }
 
 message IpEntry {

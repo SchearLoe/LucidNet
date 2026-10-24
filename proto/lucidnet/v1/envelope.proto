@@ -3,6 +3,8 @@ package lucidnet.v1;
 
 option go_package = "github.com/SchearLoe/lucidnet/gen/go/lucidnet/v1;lucidnetv1";
 
+import "security.proto"; // AttackMinute（预置缺陷修复：此前无构建设施未暴露；不影响线格式）
+
 // Kafka 信封消息（契约：docs/09 §2 —— topic/key/生产者→消费者以 09 为唯一权威）
 
 // flows.aggr.minute（key=exporter）：Analytics → Storage Inserter → CH aggr_minute
@@ -54,4 +56,5 @@ message MitigationEvent {
   string result = 5;          // applied|withdrawn|failed
   string attack_id = 6;
   int64  ts_ms = 7;
+  int32  zone_id = 8;         // 客户域（与 FlowRecord.zone_id 同型，0=未关联）；WS 按 zone 过滤处置回执
 }

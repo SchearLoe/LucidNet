@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -24,7 +25,7 @@ type tokenPair struct {
 	ExpiresIn    int    `json:"expires_in"` // access 有效期（秒）
 }
 
-// handleLogin 登录签发 JWT（claims {uid, tenant, roles, exp}，docs/dd/07 §4）。
+// handleLogin 登录签发 JWT（claims {uid, tenant, roles, perms, exp}，docs/dd/07 §4）。
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req loginReq
 	if err := decodeBody(r, &req); err != nil || req.Username == "" || req.Password == "" {
@@ -47,7 +48,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, 401, "invalid credentials")
 		return
 	}
-	pair, err := s.issueTokens(u)
+	pair, err := s.issueTokens(r.Context(), u)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, 500, "sign token failed")
 		return
@@ -75,7 +76,7 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, 401, "user disabled or removed")
 		return
 	}
-	pair, err := s.issueTokens(u)
+	pair, err := s.issueTokens(r.Context(), u)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, 500, "sign token failed")
 		return
@@ -95,17 +96,21 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) issueTokens(u rbac.User) (tokenPair, error) {
+// issueTokens 签发 access+refresh 令牌对；perms 由角色台账实时展开写入
+// （登录与刷新同路径，刷新时按当前角色台账重算，docs/dd/07 §4）。
+// 台账读取失败不阻塞签发：perms 置空，Master 侧鉴权仍按角色台账实时判定。
+func (s *Server) issueTokens(ctx context.Context, u rbac.User) (tokenPair, error) {
+	perms := s.expandPerms(ctx, u.Roles)
 	access, err := s.d.Signer.Sign(auth.Claims{
 		UID: u.ID, UserName: u.Name, Tenant: u.Tenant,
-		Roles: u.Roles, PlatformAdmin: u.PlatformAdmin, Typ: auth.TypAccess,
+		Roles: u.Roles, Perms: perms, PlatformAdmin: u.PlatformAdmin, Typ: auth.TypAccess,
 	})
 	if err != nil {
 		return tokenPair{}, err
 	}
 	refresh, err := s.d.Signer.Sign(auth.Claims{
 		UID: u.ID, UserName: u.Name, Tenant: u.Tenant,
-		Roles: u.Roles, PlatformAdmin: u.PlatformAdmin, Typ: auth.TypRefresh,
+		Roles: u.Roles, Perms: perms, PlatformAdmin: u.PlatformAdmin, Typ: auth.TypRefresh,
 		ExpiresAt: s.now().Add(auth.DefaultRefreshTTL).Unix(),
 	})
 	if err != nil {
@@ -117,6 +122,15 @@ func (s *Server) issueTokens(u rbac.User) (tokenPair, error) {
 		TokenType:    "Bearer",
 		ExpiresIn:    int(auth.DefaultAccessTTL.Seconds()),
 	}, nil
+}
+
+// expandPerms 角色→权限点展开（JWT perms claim；通配项原样保留，匹配语义同 rbac.Allowed）。
+func (s *Server) expandPerms(ctx context.Context, roles []string) []string {
+	all, err := s.d.Users.ListRoles(ctx)
+	if err != nil {
+		return nil
+	}
+	return rbac.ExpandPerms(all, roles)
 }
 
 func (s *Server) recordLogin(r *http.Request, username string, ok bool) {

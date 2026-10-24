@@ -41,6 +41,12 @@ message NodeInfo {
   string host = 3;
   uint32 cores = 4;
   uint32 mem_gb = 5;
+  repeated NicSpec nics = 6;  // 网卡档案（Master 容量权重输入：weight = cores/24 × nic/25G；未上报按 25G 基准）
+}
+
+message NicSpec {
+  string name = 1;            // 网卡名（eth0 等）
+  uint32 speed_mbps = 2;      // 协商速率（Mbps，如 25000）
 }
 message NodeAck {
   bool ok = 1;

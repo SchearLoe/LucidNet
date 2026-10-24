@@ -119,3 +119,25 @@ func AllowedAll(perms []string, required ...string) bool {
 	}
 	return true
 }
+
+// ExpandPerms —— 角色→权限点展开（登录/刷新签发 JWT perms claim 用，docs/dd/07 §4）：
+// 按用户角色名在角色台账 roles 中取各角色 Perms 并集，去重保序；
+// 通配项（* / <domain>:*）原样保留，由校验方按 Allowed 同语义匹配。
+// 未知角色名忽略；返回空切片表示无可授予权限。
+func ExpandPerms(roles []Role, userRoles []string) []string {
+	byName := make(map[string][]string, len(roles))
+	for _, r := range roles {
+		byName[r.Name] = r.Perms
+	}
+	seen := make(map[string]bool, 16)
+	out := make([]string, 0, 16)
+	for _, name := range userRoles {
+		for _, p := range byName[name] {
+			if !seen[p] {
+				seen[p] = true
+				out = append(out, p)
+			}
+		}
+	}
+	return out
+}

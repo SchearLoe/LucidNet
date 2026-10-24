@@ -40,6 +40,76 @@ func TestPresetRolesShape(t *testing.T) {
 	}
 }
 
+// TestExpandPerms —— 角色→权限码展开（JWT perms claim 签发输入）：
+// 并集去重保序、通配原样保留、未知角色忽略。
+func TestExpandPerms(t *testing.T) {
+	ledger := append(PresetRoles(), Role{
+		Name: "custom", Perms: []string{"zone:edit", "zone:read", "report:*"},
+	})
+	cases := []struct {
+		name      string
+		userRoles []string
+		want      []string
+	}{
+		{
+			name:      "单角色展开",
+			userRoles: []string{RoleObserver},
+			want:      PresetRolePerms(PresetRoles(), RoleObserver),
+		},
+		{
+			name:      "多角色并集去重保序",
+			userRoles: []string{RoleSecurityOp, RoleObserver},
+			want: []string{
+				// security-operator 在前（保用户角色顺序），与 observer 重复项只留首次
+				"overview:read", "analysis:read",
+				"zone:read", "device:read",
+				"flows:read", "flows:export",
+				"attack:read", "attack:handle",
+				"bgp:read", "bgp:handle",
+				"report:read", "monitor:read",
+				"forward:read", "policy:read",
+				"audit:read", "admin:read", "deploy:read",
+			},
+		},
+		{
+			name:      "自定义角色通配原样保留",
+			userRoles: []string{"custom"},
+			want:      []string{"zone:edit", "zone:read", "report:*"},
+		},
+		{
+			name:      "平台管理员全权通配",
+			userRoles: []string{RolePlatformAdmin},
+			want:      []string{"*"},
+		},
+		{
+			name:      "未知角色忽略",
+			userRoles: []string{"ghost", RoleObserver},
+			want:      PresetRolePerms(PresetRoles(), RoleObserver),
+		},
+		{
+			name:      "无角色",
+			userRoles: nil,
+			want:      []string{},
+		},
+	}
+	for _, c := range cases {
+		got := ExpandPerms(ledger, c.userRoles)
+		if len(got) != len(c.want) {
+			t.Fatalf("%s: ExpandPerms = %v, want %v", c.name, got, c.want)
+		}
+		for i := range c.want {
+			if got[i] != c.want[i] {
+				t.Fatalf("%s: ExpandPerms[%d] = %q, want %q（全序列 %v）", c.name, i, got[i], c.want[i], got)
+			}
+		}
+	}
+	// 展开结果须可直接通过 Allowed 校验（网关权威校验的同语义）
+	perms := ExpandPerms(ledger, []string{"custom"})
+	if !Allowed(perms, "zone:edit") || !Allowed(perms, "report:manage") || Allowed(perms, "admin:manage") {
+		t.Fatalf("expanded perms %v failed wildcard/exact matching", perms)
+	}
+}
+
 func PresetRolePerms(roles []Role, name string) []string {
 	for _, r := range roles {
 		if r.Name == name {

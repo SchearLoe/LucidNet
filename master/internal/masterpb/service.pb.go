@@ -228,6 +228,7 @@ type NodeInfo struct {
 	Host          string                 `protobuf:"bytes,3,opt,name=host,proto3" json:"host,omitempty"`
 	Cores         uint32                 `protobuf:"varint,4,opt,name=cores,proto3" json:"cores,omitempty"`
 	MemGb         uint32                 `protobuf:"varint,5,opt,name=mem_gb,json=memGb,proto3" json:"mem_gb,omitempty"`
+	Nics          []*NicSpec             `protobuf:"bytes,6,rep,name=nics,proto3" json:"nics,omitempty"` // 网卡档案（Master 容量权重输入：weight = cores/24 × nic/25G；未上报按 25G 基准）
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -297,6 +298,65 @@ func (x *NodeInfo) GetMemGb() uint32 {
 	return 0
 }
 
+func (x *NodeInfo) GetNics() []*NicSpec {
+	if x != nil {
+		return x.Nics
+	}
+	return nil
+}
+
+type NicSpec struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                             // 网卡名（eth0 等）
+	SpeedMbps     uint32                 `protobuf:"varint,2,opt,name=speed_mbps,json=speedMbps,proto3" json:"speed_mbps,omitempty"` // 协商速率（Mbps，如 25000）
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NicSpec) Reset() {
+	*x = NicSpec{}
+	mi := &file_service_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NicSpec) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NicSpec) ProtoMessage() {}
+
+func (x *NicSpec) ProtoReflect() protoreflect.Message {
+	mi := &file_service_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NicSpec.ProtoReflect.Descriptor instead.
+func (*NicSpec) Descriptor() ([]byte, []int) {
+	return file_service_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *NicSpec) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *NicSpec) GetSpeedMbps() uint32 {
+	if x != nil {
+		return x.SpeedMbps
+	}
+	return 0
+}
+
 type NodeAck struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
@@ -307,7 +367,7 @@ type NodeAck struct {
 
 func (x *NodeAck) Reset() {
 	*x = NodeAck{}
-	mi := &file_service_proto_msgTypes[5]
+	mi := &file_service_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -319,7 +379,7 @@ func (x *NodeAck) String() string {
 func (*NodeAck) ProtoMessage() {}
 
 func (x *NodeAck) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[5]
+	mi := &file_service_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -332,7 +392,7 @@ func (x *NodeAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeAck.ProtoReflect.Descriptor instead.
 func (*NodeAck) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{5}
+	return file_service_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *NodeAck) GetOk() bool {
@@ -360,7 +420,7 @@ type NodeStat struct {
 
 func (x *NodeStat) Reset() {
 	*x = NodeStat{}
-	mi := &file_service_proto_msgTypes[6]
+	mi := &file_service_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -372,7 +432,7 @@ func (x *NodeStat) String() string {
 func (*NodeStat) ProtoMessage() {}
 
 func (x *NodeStat) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[6]
+	mi := &file_service_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -385,7 +445,7 @@ func (x *NodeStat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeStat.ProtoReflect.Descriptor instead.
 func (*NodeStat) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{6}
+	return file_service_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *NodeStat) GetNodeId() string {
@@ -419,7 +479,7 @@ type MasterCmd struct {
 
 func (x *MasterCmd) Reset() {
 	*x = MasterCmd{}
-	mi := &file_service_proto_msgTypes[7]
+	mi := &file_service_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -431,7 +491,7 @@ func (x *MasterCmd) String() string {
 func (*MasterCmd) ProtoMessage() {}
 
 func (x *MasterCmd) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[7]
+	mi := &file_service_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -444,7 +504,7 @@ func (x *MasterCmd) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MasterCmd.ProtoReflect.Descriptor instead.
 func (*MasterCmd) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{7}
+	return file_service_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *MasterCmd) GetType() string {
@@ -471,7 +531,7 @@ type ConfigPublish struct {
 
 func (x *ConfigPublish) Reset() {
 	*x = ConfigPublish{}
-	mi := &file_service_proto_msgTypes[8]
+	mi := &file_service_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -483,7 +543,7 @@ func (x *ConfigPublish) String() string {
 func (*ConfigPublish) ProtoMessage() {}
 
 func (x *ConfigPublish) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[8]
+	mi := &file_service_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -496,7 +556,7 @@ func (x *ConfigPublish) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfigPublish.ProtoReflect.Descriptor instead.
 func (*ConfigPublish) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{8}
+	return file_service_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ConfigPublish) GetScope() string {
@@ -522,7 +582,7 @@ type ConfigVersion struct {
 
 func (x *ConfigVersion) Reset() {
 	*x = ConfigVersion{}
-	mi := &file_service_proto_msgTypes[9]
+	mi := &file_service_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -534,7 +594,7 @@ func (x *ConfigVersion) String() string {
 func (*ConfigVersion) ProtoMessage() {}
 
 func (x *ConfigVersion) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[9]
+	mi := &file_service_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -547,7 +607,7 @@ func (x *ConfigVersion) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfigVersion.ProtoReflect.Descriptor instead.
 func (*ConfigVersion) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{9}
+	return file_service_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ConfigVersion) GetVersion() uint64 {
@@ -565,7 +625,7 @@ type WatchAssignRequest struct {
 
 func (x *WatchAssignRequest) Reset() {
 	*x = WatchAssignRequest{}
-	mi := &file_service_proto_msgTypes[10]
+	mi := &file_service_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -577,7 +637,7 @@ func (x *WatchAssignRequest) String() string {
 func (*WatchAssignRequest) ProtoMessage() {}
 
 func (x *WatchAssignRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[10]
+	mi := &file_service_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -590,7 +650,7 @@ func (x *WatchAssignRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchAssignRequest.ProtoReflect.Descriptor instead.
 func (*WatchAssignRequest) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{10}
+	return file_service_proto_rawDescGZIP(), []int{11}
 }
 
 type AssignTable struct {
@@ -603,7 +663,7 @@ type AssignTable struct {
 
 func (x *AssignTable) Reset() {
 	*x = AssignTable{}
-	mi := &file_service_proto_msgTypes[11]
+	mi := &file_service_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -615,7 +675,7 @@ func (x *AssignTable) String() string {
 func (*AssignTable) ProtoMessage() {}
 
 func (x *AssignTable) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[11]
+	mi := &file_service_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -628,7 +688,7 @@ func (x *AssignTable) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AssignTable.ProtoReflect.Descriptor instead.
 func (*AssignTable) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{11}
+	return file_service_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *AssignTable) GetVersion() uint64 {
@@ -655,7 +715,7 @@ type AssignEntry struct {
 
 func (x *AssignEntry) Reset() {
 	*x = AssignEntry{}
-	mi := &file_service_proto_msgTypes[12]
+	mi := &file_service_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -667,7 +727,7 @@ func (x *AssignEntry) String() string {
 func (*AssignEntry) ProtoMessage() {}
 
 func (x *AssignEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[12]
+	mi := &file_service_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -680,7 +740,7 @@ func (x *AssignEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AssignEntry.ProtoReflect.Descriptor instead.
 func (*AssignEntry) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{12}
+	return file_service_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *AssignEntry) GetExporter() string {
@@ -712,13 +772,18 @@ const file_service_proto_rawDesc = "" +
 	"\x12GetSnapshotRequest\";\n" +
 	"\vRibSnapshot\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x04R\aversion\x12\x12\n" +
-	"\x04data\x18\x02 \x01(\fR\x04data\"o\n" +
+	"\x04data\x18\x02 \x01(\fR\x04data\"\x99\x01\n" +
 	"\bNodeInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04role\x18\x02 \x01(\tR\x04role\x12\x12\n" +
 	"\x04host\x18\x03 \x01(\tR\x04host\x12\x14\n" +
 	"\x05cores\x18\x04 \x01(\rR\x05cores\x12\x15\n" +
-	"\x06mem_gb\x18\x05 \x01(\rR\x05memGb\":\n" +
+	"\x06mem_gb\x18\x05 \x01(\rR\x05memGb\x12(\n" +
+	"\x04nics\x18\x06 \x03(\v2\x14.lucidnet.v1.NicSpecR\x04nics\"<\n" +
+	"\aNicSpec\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1d\n" +
+	"\n" +
+	"speed_mbps\x18\x02 \x01(\rR\tspeedMbps\":\n" +
 	"\aNodeAck\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x1f\n" +
 	"\vconfig_json\x18\x02 \x01(\tR\n" +
@@ -764,43 +829,45 @@ func file_service_proto_rawDescGZIP() []byte {
 	return file_service_proto_rawDescData
 }
 
-var file_service_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_service_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_service_proto_goTypes = []any{
 	(*LookupRequest)(nil),      // 0: lucidnet.v1.LookupRequest
 	(*LookupReply)(nil),        // 1: lucidnet.v1.LookupReply
 	(*GetSnapshotRequest)(nil), // 2: lucidnet.v1.GetSnapshotRequest
 	(*RibSnapshot)(nil),        // 3: lucidnet.v1.RibSnapshot
 	(*NodeInfo)(nil),           // 4: lucidnet.v1.NodeInfo
-	(*NodeAck)(nil),            // 5: lucidnet.v1.NodeAck
-	(*NodeStat)(nil),           // 6: lucidnet.v1.NodeStat
-	(*MasterCmd)(nil),          // 7: lucidnet.v1.MasterCmd
-	(*ConfigPublish)(nil),      // 8: lucidnet.v1.ConfigPublish
-	(*ConfigVersion)(nil),      // 9: lucidnet.v1.ConfigVersion
-	(*WatchAssignRequest)(nil), // 10: lucidnet.v1.WatchAssignRequest
-	(*AssignTable)(nil),        // 11: lucidnet.v1.AssignTable
-	(*AssignEntry)(nil),        // 12: lucidnet.v1.AssignEntry
+	(*NicSpec)(nil),            // 5: lucidnet.v1.NicSpec
+	(*NodeAck)(nil),            // 6: lucidnet.v1.NodeAck
+	(*NodeStat)(nil),           // 7: lucidnet.v1.NodeStat
+	(*MasterCmd)(nil),          // 8: lucidnet.v1.MasterCmd
+	(*ConfigPublish)(nil),      // 9: lucidnet.v1.ConfigPublish
+	(*ConfigVersion)(nil),      // 10: lucidnet.v1.ConfigVersion
+	(*WatchAssignRequest)(nil), // 11: lucidnet.v1.WatchAssignRequest
+	(*AssignTable)(nil),        // 12: lucidnet.v1.AssignTable
+	(*AssignEntry)(nil),        // 13: lucidnet.v1.AssignEntry
 }
 var file_service_proto_depIdxs = []int32{
-	12, // 0: lucidnet.v1.AssignTable.entries:type_name -> lucidnet.v1.AssignEntry
-	0,  // 1: lucidnet.v1.RibNameLookup.Lookup:input_type -> lucidnet.v1.LookupRequest
-	2,  // 2: lucidnet.v1.RibNameLookup.GetSnapshot:input_type -> lucidnet.v1.GetSnapshotRequest
-	2,  // 3: lucidnet.v1.RibNameLookup.WatchSnapshot:input_type -> lucidnet.v1.GetSnapshotRequest
-	4,  // 4: lucidnet.v1.Master.RegisterNode:input_type -> lucidnet.v1.NodeInfo
-	6,  // 5: lucidnet.v1.Master.Heartbeat:input_type -> lucidnet.v1.NodeStat
-	8,  // 6: lucidnet.v1.Master.PublishConfig:input_type -> lucidnet.v1.ConfigPublish
-	10, // 7: lucidnet.v1.Master.WatchAssign:input_type -> lucidnet.v1.WatchAssignRequest
-	1,  // 8: lucidnet.v1.RibNameLookup.Lookup:output_type -> lucidnet.v1.LookupReply
-	3,  // 9: lucidnet.v1.RibNameLookup.GetSnapshot:output_type -> lucidnet.v1.RibSnapshot
-	3,  // 10: lucidnet.v1.RibNameLookup.WatchSnapshot:output_type -> lucidnet.v1.RibSnapshot
-	5,  // 11: lucidnet.v1.Master.RegisterNode:output_type -> lucidnet.v1.NodeAck
-	7,  // 12: lucidnet.v1.Master.Heartbeat:output_type -> lucidnet.v1.MasterCmd
-	9,  // 13: lucidnet.v1.Master.PublishConfig:output_type -> lucidnet.v1.ConfigVersion
-	11, // 14: lucidnet.v1.Master.WatchAssign:output_type -> lucidnet.v1.AssignTable
-	8,  // [8:15] is the sub-list for method output_type
-	1,  // [1:8] is the sub-list for method input_type
-	1,  // [1:1] is the sub-list for extension type_name
-	1,  // [1:1] is the sub-list for extension extendee
-	0,  // [0:1] is the sub-list for field type_name
+	5,  // 0: lucidnet.v1.NodeInfo.nics:type_name -> lucidnet.v1.NicSpec
+	13, // 1: lucidnet.v1.AssignTable.entries:type_name -> lucidnet.v1.AssignEntry
+	0,  // 2: lucidnet.v1.RibNameLookup.Lookup:input_type -> lucidnet.v1.LookupRequest
+	2,  // 3: lucidnet.v1.RibNameLookup.GetSnapshot:input_type -> lucidnet.v1.GetSnapshotRequest
+	2,  // 4: lucidnet.v1.RibNameLookup.WatchSnapshot:input_type -> lucidnet.v1.GetSnapshotRequest
+	4,  // 5: lucidnet.v1.Master.RegisterNode:input_type -> lucidnet.v1.NodeInfo
+	7,  // 6: lucidnet.v1.Master.Heartbeat:input_type -> lucidnet.v1.NodeStat
+	9,  // 7: lucidnet.v1.Master.PublishConfig:input_type -> lucidnet.v1.ConfigPublish
+	11, // 8: lucidnet.v1.Master.WatchAssign:input_type -> lucidnet.v1.WatchAssignRequest
+	1,  // 9: lucidnet.v1.RibNameLookup.Lookup:output_type -> lucidnet.v1.LookupReply
+	3,  // 10: lucidnet.v1.RibNameLookup.GetSnapshot:output_type -> lucidnet.v1.RibSnapshot
+	3,  // 11: lucidnet.v1.RibNameLookup.WatchSnapshot:output_type -> lucidnet.v1.RibSnapshot
+	6,  // 12: lucidnet.v1.Master.RegisterNode:output_type -> lucidnet.v1.NodeAck
+	8,  // 13: lucidnet.v1.Master.Heartbeat:output_type -> lucidnet.v1.MasterCmd
+	10, // 14: lucidnet.v1.Master.PublishConfig:output_type -> lucidnet.v1.ConfigVersion
+	12, // 15: lucidnet.v1.Master.WatchAssign:output_type -> lucidnet.v1.AssignTable
+	9,  // [9:16] is the sub-list for method output_type
+	2,  // [2:9] is the sub-list for method input_type
+	2,  // [2:2] is the sub-list for extension type_name
+	2,  // [2:2] is the sub-list for extension extendee
+	0,  // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_service_proto_init() }
@@ -814,7 +881,7 @@ func file_service_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_service_proto_rawDesc), len(file_service_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   13,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   2,
 		},
