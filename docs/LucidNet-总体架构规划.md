@@ -1,8 +1,9 @@
 # LucidNet 网络流量智能分析平台 — 总体架构规划
 
-> 版本：v0.2.1｜日期：2026-10-24
+> 版本：v0.3｜日期：2026-10-24
 > v0.1 → v0.2：吸收 9 项细化需求（R1–R9，见需求追踪矩阵）；新增 LucidBGP 模块；存储保留期调整为**明细 15 天**并重算容量；文档体系拆分为各模块概要设计 + 详细设计。
 > v0.2 → v0.2.1：§3 架构图重绘（Mermaid），新增"一条流记录的旅程"数据流说明、物理部署视图、分流层论证与部署形态。
+> v0.2.1 → v0.3：新增 **08 LucidDeploy（部署与升级）**模块：制品/版本规范、lucidctl 一键安装、滚动升级/灰度/回滚、Console 部署中心；许可确立为 AGPL-3.0-only + 商业双许可。
 > 定位：基于 NetStream/NetFlow/IPFIX/sFlow、SNMP、BGP/BMP 多源数据，提供**网络流洞察、流量波动分析、秒级攻击检测与处置闭环**的一体化产品。
 > 对标：Genie Networks GenieATM/FLB；参考 Akvorado（开源架构）、Gigamon（报文侧分流）。
 > 性能目标：**10 台服务器集群 ≥100 万 flows/s 持续处理，IPv4/IPv6 双栈**。
@@ -171,6 +172,7 @@ flowchart TB
 | 05 | LucidConsole | Web 控制台/攻击中心/报表中心(R8)/API | docs/hld/05 | docs/dd/05 |
 | 06 | LucidBGP | BGP 路由管理与处置（rsbgp-console 改名） | docs/hld/06 | docs/dd/06 |
 | 07 | LucidMaster | 集群管理/配置/RBAC/自监控 | docs/hld/07 | docs/dd/07 |
+| 08 | LucidDeploy | 制品规范/一键安装/滚动升级/回滚/部署中心页面 | docs/hld/08 | docs/dd/08 |
 
 ## 5. 关键设计决策（摘要，细节见各模块文档）
 
@@ -209,8 +211,8 @@ flowchart TB
 | 阶段 | 内容 | 关键验收 |
 |---|---|---|
 | M0 PoC（4–6 周） | goflow2→Kafka→ClickHouse→Grafana 打通；Zone 富化原型；LucidBGP 从 rsbgp-console 完成改名与 token 对接 | 单机 50w fps 压测报告 |
-| M1 MVP（~3 月） | FLB + Forwarder(R1) + 采集集群 + IPv6(R3) + 接口角色(R4) + 分钟聚合 + 核心看板 + SNMP | 3 节点 30w fps；R1/R3/R4 验收 |
-| M2 检测与取证（~3 月） | Zone 秒级检测(R2) + 扫段(R7) + 波动告警(R7) + 攻击分钟详情与原始日志导出(R5) + 15 天查询(R6) + 流量矩阵 UI + LucidBGP 告警联动处置 | **10 节点 100w fps + 300 客户模拟压测 + 攻击演练** |
+| M1 MVP（~3 月） | FLB + Forwarder(R1) + 采集集群 + IPv6(R3) + 接口角色(R4) + 分钟聚合 + 核心看板 + SNMP + **部署框架(08: agent/lucidctl/install)** | 3 节点 30w fps；R1/R3/R4 验收；**3 节点一键安装演练** |
+| M2 检测与取证（~3 月） | Zone 秒级检测(R2) + 扫段(R7) + 波动告警(R7) + 攻击分钟详情与原始日志导出(R5) + 15 天查询(R6) + 流量矩阵 UI + LucidBGP 告警联动处置 + **滚动升级/回滚(08)** | **10 节点 100w fps + 300 客户模拟压测 + 攻击演练 + 升级回滚演练** |
 | M3 增值（~3 月） | 报表中心(R8) + Flowspec 处置 + 多租户 + 容量预测 + 可选 DPDK 报文分流 | R8/R9 全量验收 |
 
 ## 8. 主要风险与对策（v0.2 增补）

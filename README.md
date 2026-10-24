@@ -21,15 +21,16 @@
 docs/
 ├── LucidNet-总体架构规划.md        总体架构 v0.2（需求追踪矩阵 R1-R9、容量规划、里程碑）
 ├── 00-公共数据模型与接口规范.md     proto / Kafka topic / ClickHouse DDL / REST 约定
-├── hld/ 01~07                     各模块概要设计
+├── hld/ 01~08                     各模块概要设计
 │   ├── 01-汇聚分流LucidBroker       FLB 流负载均衡 + 多目的转发/再采样
 │   ├── 02-采集解析LucidCollector    流解码归一化富化 + SNMP/接口角色识别
 │   ├── 03-流式分析LucidAnalytics   分钟聚合 + Zone 秒级检测引擎
 │   ├── 04-存储LucidStorage         ClickHouse 明细 15 天冷热分层
 │   ├── 05-展示与报表LucidConsole   攻击中心 + 15 天明细查询 + 自定义报表
 │   ├── 06-BGP路由管理LucidBGP      gobgpd 管理 + 告警联动处置闭环
-│   └── 07-集群管理LucidMaster      节点/配置/RBAC/自监控
-└── dd/ 01~07                      各模块详细设计（可直接指导开发）
+│   ├── 07-集群管理LucidMaster      节点/配置/RBAC/自监控
+│   └── 08-部署与升级LucidDeploy   拓扑一键安装 · 滚动升级 · 灰度回滚
+└── dd/ 01~08                      各模块详细设计（可直接指导开发）
 ```
 
 ## 技术栈

@@ -58,7 +58,8 @@ user_roles(user_id, role_id)
 
 ## 6. 升级编排（滚动）
 
-顺序：FLB/Broker → Collector（排水轮换）→ Analytics（分区重平衡稳定后下一台）→ CH（副本轮换，`system.replicas` 追平）→ Master/Console/gobgpd（主备切换 dd/06 §3）。
+升级的完整流程（预检/备份/Canary/门禁/回滚）已移交 **08 部署与升级模块**统一规范（docs/dd/08 §5），本节保留 Master 承担的原语职责：
+- Master 提供节点排水（§2）与配置版本回滚（§5）接口，供 Deploy Engine 调用；
 - 版本兼容矩阵（PG `upgrade_matrix`）：跨版本配置 schema 迁移脚本随发布物；大版本不跳级。
 
 ## 7. 故障场景与演练清单（M2 验收）
