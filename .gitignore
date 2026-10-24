@@ -1,0 +1,23 @@
+# Go
+*.exe
+*.exe~
+*.test
+*.out
+dist/
+bin/
+
+# Node
+node_modules/
+frontend/dist/
+*.local
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+.DS_Store
+
+# 本地环境
+*.local.yml
+.env
