@@ -25,10 +25,14 @@ type Config struct {
 	StorageURL string
 	// LucidBGP 基址（R9 一键处置 /api/bgp/*，docs/dd/05 §5）。
 	BGPURL string
-	// Redis 地址（实时 rt:* TopN 轮询，M1 未接线仅校验格式，见 TODO）。
+	// Redis 地址（实时 rt:* 读模型，docs/00 §6 / docs/09 §6；空=纯内存模式）。
 	RedisAddr string
+	// Redis 连接参数（LUCID_CONSOLE_REDIS_*，docs/11 §8 命名风格）。
+	RedisPassword  string
+	RedisDB        int
+	RedisKeyPrefix string // 实时键前缀，默认 "rt:"（docs/09 §6 裁定）
 	// 明细查询令牌桶：每用户 QPS（docs/dd/05 §6：10 QPS/用户）。
-	FlowsQueryQPS float64
+	FlowsQueryQPS   float64
 	FlowsQueryBurst int
 	// 实时缓存容量（attacks 注册表 / alarms 环形缓冲条数）。
 	RecentAttacksCap int
@@ -46,6 +50,9 @@ func Load() (Config, error) {
 		StorageURL:       env("LUCID_CONSOLE_STORAGE_URL", "http://127.0.0.1:8082"),
 		BGPURL:           env("LUCID_CONSOLE_BGP_URL", "http://127.0.0.1:8083"),
 		RedisAddr:        os.Getenv("LUCID_CONSOLE_REDIS_ADDR"),
+		RedisPassword:    os.Getenv("LUCID_CONSOLE_REDIS_PASSWORD"),
+		RedisDB:          envInt("LUCID_CONSOLE_REDIS_DB", 0),
+		RedisKeyPrefix:   env("LUCID_CONSOLE_REDIS_KEY_PREFIX", "rt:"),
 		FlowsQueryQPS:    10,
 		FlowsQueryBurst:  20,
 		RecentAttacksCap: 1000,
@@ -95,4 +102,16 @@ func envBool(key string, def bool) bool {
 		return def
 	}
 	return b
+}
+
+func envInt(key string, def int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
 }

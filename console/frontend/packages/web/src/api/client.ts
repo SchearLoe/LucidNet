@@ -3,7 +3,18 @@
  * token 存 localStorage；生产签发走 Master /api/v1/auth/*（M1 联调支持粘贴
  * `lucid-gateway -dev-token` 产出的 JWT）。
  */
-import type { Envelope, Page, AttackEvent, Alarm, ZoneTraffic } from "@lucid/shared";
+import type {
+  Envelope,
+  Page,
+  AttackEvent,
+  Alarm,
+  AttackMinute,
+  ZoneTraffic,
+  FlowSearchRequest,
+  FlowSearchReply,
+  ExportJobRequest,
+  ExportJobStatus,
+} from "@lucid/shared";
 
 const TOKEN_KEY = "lucid_token";
 
@@ -74,7 +85,36 @@ export function zoneRealtime(): Promise<ZoneTraffic[]> {
   return request<ZoneTraffic[]>("/api/v1/zones/realtime");
 }
 
-/** R5：攻击分钟明细（Storage 上游）。 */
-export function attackMinutes(attackId: string): Promise<unknown> {
-  return request(`/api/v1/attacks/${encodeURIComponent(attackId)}/minutes`);
+/** R5：攻击详情头部（含 evidence_json 特征快照）。 */
+export function getAttack(attackId: string): Promise<AttackEvent> {
+  return request<AttackEvent>(`/api/v1/attacks/${encodeURIComponent(attackId)}`);
+}
+
+/** R5：攻击分钟明细（Storage 点查 CH attack_minutes；窗口参数与网关现有 from_ms/to_ms 一致）。 */
+export function attackMinutes(attackId: string, fromMs?: number, toMs?: number): Promise<AttackMinute[]> {
+  const q = new URLSearchParams();
+  if (fromMs) q.set("from_ms", String(fromMs));
+  if (toMs) q.set("to_ms", String(toMs));
+  const qs = q.toString();
+  return request<AttackMinute[]>(`/api/v1/attacks/${encodeURIComponent(attackId)}/minutes${qs ? `?${qs}` : ""}`);
+}
+
+/** R9：一键处置（转发 LucidBGP 预填处置表单；需 attack:handle）。 */
+export function mitigateAttack(attackId: string): Promise<{ attack_id: string; forwarded: string }> {
+  return request(`/api/v1/attacks/${encodeURIComponent(attackId)}/mitigate`, { method: "POST" });
+}
+
+/** R6：明细查询（网关 10 QPS/用户限流；时间窗 ≤6h，epoch 秒）。 */
+export function searchFlows(req: FlowSearchRequest): Promise<FlowSearchReply> {
+  return request<FlowSearchReply>("/api/v1/flows/search", { method: "POST", body: JSON.stringify(req) });
+}
+
+/** R5/R6：创建异步导出任务（窗口 ≤72h；产物链接 24h 有效）。 */
+export function createExportJob(req: ExportJobRequest): Promise<ExportJobStatus> {
+  return request<ExportJobStatus>("/api/v1/export/jobs", { method: "POST", body: JSON.stringify(req) });
+}
+
+/** R5/R6：导出任务状态/进度/下载链接轮询。 */
+export function getExportJob(jobId: string): Promise<ExportJobStatus> {
+  return request<ExportJobStatus>(`/api/v1/export/jobs/${encodeURIComponent(jobId)}`);
 }

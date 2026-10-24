@@ -199,3 +199,60 @@ table.lucid td.num {
 .theme-dark {
   background: var(--lucid-bg);
 }
+
+/* 表单控件（L1 过滤区：紧凑、token 化；docs/10 §3.4） */
+input,
+select {
+  font-family: var(--lucid-font-ui);
+  font-size: var(--lucid-size-13);
+  color: var(--lucid-text);
+  background: var(--lucid-surface);
+  border: 1px solid var(--lucid-border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  height: 28px;
+}
+
+input:focus,
+select:focus {
+  outline: none;
+  border-color: var(--lucid-primary);
+}
+
+button {
+  font-family: var(--lucid-font-ui);
+  font-size: var(--lucid-size-13);
+  padding: 4px 14px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--lucid-border);
+  background: var(--lucid-surface);
+  color: var(--lucid-text);
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--lucid-primary);
+  color: var(--lucid-primary);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 危险操作（一键处置，docs/10 §5.1-6：红色 + 二次确认） */
+button.danger {
+  background: var(--lucid-attack);
+  border-color: var(--lucid-attack);
+  color: #fff;
+}
+
+button.danger:hover:not(:disabled) {
+  color: #fff;
+  filter: brightness(1.08);
+}
+
+a {
+  color: var(--lucid-primary);
+}

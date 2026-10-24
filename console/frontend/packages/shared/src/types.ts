@@ -96,6 +96,86 @@ export interface Page<T> {
   total: number;
 }
 
+/** R6 维度过滤（docs/dd/04 §2.1 白名单：≥1 个条件，≤8 个；与 upstream.FlowFilters 镜像）。 */
+export interface FlowFilters {
+  src_ip?: string; // IP 或 CIDR
+  dst_ip?: string;
+  src_port?: number;
+  dst_port?: number;
+  proto?: number;
+  zone_id?: number;
+  device_id?: number;
+  in_if?: number;
+  out_if?: number;
+  ip_version?: number; // R3：4/6
+  /** 方向（客户视角 in/out；M1 网关契约未登记，前端先传、Storage 落地后生效）。 */
+  direction?: "in" | "out";
+}
+
+/** R6 明细查询请求（docs/dd/04 §2.2；时间参数 epoch 秒，docs/09 §6 裁定）。 */
+export interface FlowSearchRequest {
+  time_start: number;
+  time_end: number;
+  filters: FlowFilters;
+  order_by?: string;
+  desc?: boolean;
+  page?: number;
+  page_size?: number;
+  fields?: string[];
+  cursor?: unknown;
+}
+
+/** R6 查询响应（total_estimate 超 1,000 万由 Storage 截断提示）。 */
+export interface FlowSearchReply {
+  total_estimate: number;
+  rows: FlowRow[];
+  query_id: string;
+  cursor?: unknown;
+}
+
+/** 结果行（Storage 返回 map[string]any；已知列按 FlowRecord JSON 投影，防御性读取）。 */
+export interface FlowRow {
+  time_start_ms?: number;
+  time_end_ms?: number;
+  start?: string;
+  end?: string;
+  src_ip?: string;
+  dst_ip?: string;
+  src_port?: number;
+  dst_port?: number;
+  proto?: number;
+  packets?: number;
+  bytes?: number;
+  tcp_flags?: number | string;
+  in_if?: number;
+  out_if?: number;
+  sample_rate?: number;
+  zone_id?: number;
+  direction?: string;
+  [key: string]: unknown;
+}
+
+/** R5/R6 异步导出任务请求（docs/dd/04 §5.1；窗口 ≤72h）。 */
+export interface ExportJobRequest {
+  type: "flows" | "attack_flows" | "aggr" | "attacks";
+  attack_id?: string;
+  time_start: number;
+  time_end: number;
+  filters?: FlowFilters;
+  format?: "text" | "csv" | "jsonl";
+  sample?: "raw" | "downscale_10x";
+}
+
+/** 导出任务状态（docs/00 §6：产物落 MinIO，链接 24h 有效）。 */
+export interface ExportJobStatus {
+  job_id: string;
+  status: "queued" | "running" | "done" | "failed";
+  progress?: number;
+  url?: string;
+  expires_at?: number;
+  error?: string;
+}
+
 /** 攻击类型展示名（docs/10 §5.3 术语表唯一权威）。 */
 export const ATTACK_TYPE_LABEL: Record<number, string> = {
   [AttackType.SYN_FLOOD]: "SYN Flood",

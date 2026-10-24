@@ -1,5 +1,6 @@
-/** 攻击中心列表（L1 列表筛选页，docs/dd/05 §3.1：攻击中置顶、WS 实时、CSV 导出）。 */
+/** 攻击中心列表（L1 列表筛选页，docs/dd/05 §3.1：攻击中置顶、WS 实时、CSV 导出；行点击进 R5 详情）。 */
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { listAttacks } from "../api/client";
 import { useStream } from "../stream/useStream";
 import { StatusBadge } from "../components/StatusBadge";
@@ -79,12 +80,13 @@ export function AttackList() {
               <th className="num">置信度</th>
               <th>开始时间</th>
               <th>状态</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={8} style={{ color: "var(--lucid-neutral)" }}>
+                <td colSpan={9} style={{ color: "var(--lucid-neutral)" }}>
                   暂无攻击记录 — 检查过滤条件/时间窗；攻击事件经网关 WS（alarms 主题）实时进入
                 </td>
               </tr>
@@ -104,6 +106,11 @@ export function AttackList() {
                 </td>
                 <td>
                   <StatusBadge status={a.status} />
+                </td>
+                <td>
+                  <Link to={`/security/attacks/${encodeURIComponent(a.attack_id)}`} style={{ color: "var(--lucid-primary)" }}>
+                    详情
+                  </Link>
                 </td>
               </tr>
             ))}

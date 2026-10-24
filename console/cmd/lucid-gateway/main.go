@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/SchearLoe/lucidnet/shared"
 
 	"github.com/SchearLoe/lucidnet/console/internal/auth"
@@ -23,6 +25,7 @@ import (
 	"github.com/SchearLoe/lucidnet/console/internal/httpapi"
 	"github.com/SchearLoe/lucidnet/console/internal/hub"
 	"github.com/SchearLoe/lucidnet/console/internal/ingest"
+	"github.com/SchearLoe/lucidnet/console/internal/query"
 	"github.com/SchearLoe/lucidnet/console/internal/ratelimit"
 	"github.com/SchearLoe/lucidnet/console/internal/store"
 	"github.com/SchearLoe/lucidnet/console/internal/upstream"
@@ -65,6 +68,22 @@ func main() {
 	mem := store.NewMemory(cfg.RecentAttacksCap, cfg.RecentAlarmsCap)
 	h := hub.NewHub()
 
+	// —— 客户域实时视图（R2）：配置 Redis 则读 rt:* 实时键（docs/00 §6 /
+	// docs/09 §6 裁定），错误回落内存；未配置保持纯内存（行为与 M1 一致）——
+	var zones query.RealtimeReader = mem
+	if cfg.RedisAddr != "" {
+		rdb := redis.NewClient(&redis.Options{
+			Addr:     cfg.RedisAddr,
+			Password: cfg.RedisPassword,
+			DB:       cfg.RedisDB,
+		})
+		zones = store.NewRedisRealtime(rdb, cfg.RedisKeyPrefix, mem, log)
+		defer func() { _ = rdb.Close() }()
+		log.Info("realtime reader = redis", "module", "gateway", "addr", cfg.RedisAddr, "prefix", cfg.RedisKeyPrefix)
+	} else {
+		log.Info("realtime reader = memory (LUCID_CONSOLE_REDIS_ADDR not set)", "module", "gateway")
+	}
+
 	// —— 上游客户端（Storage 并行开发中：未部署时降级 503）——
 	storageClient := upstream.NewHTTPStorage(cfg.StorageURL)
 	bgp := upstream.NewBGPClient(cfg.BGPURL)
@@ -86,7 +105,7 @@ func main() {
 	handlers := &httpapi.Handlers{
 		Attacks:           mem,
 		Alarms:            mem,
-		Zones:             mem,
+		Zones:             zones,
 		Storage:           storageClient,
 		BGP:               bgp,
 		Limiter:           ratelimit.New(cfg.FlowsQueryQPS, cfg.FlowsQueryBurst),
