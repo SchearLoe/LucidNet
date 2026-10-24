@@ -22,6 +22,7 @@ import (
 	"github.com/SchearLoe/lucidnet/analytics/internal/consume"
 	"github.com/SchearLoe/lucidnet/analytics/internal/detector"
 	"github.com/SchearLoe/lucidnet/analytics/internal/fsm"
+	"github.com/SchearLoe/lucidnet/analytics/internal/rtkeys"
 	"github.com/SchearLoe/lucidnet/shared"
 )
 
@@ -86,9 +87,14 @@ func run(cfg config) error {
 	defer pub.Close()
 	go drainAlarms(pub)
 
+	// Redis 实时键桩（09 §6 rt:* 前缀）：攻击证据快照 rt:evidence:{attack_id}
+	// TTL 24h；TopN rt:topn:{dim}:{ts} TTL 10m 待 TopN 算子（README TODO 4）。
+	// M2 换真实 Redis 客户端实现 rtkeys.Store。
+	rtStore := rtkeys.NewDevStore()
+
 	// 状态机 + 检测引擎 + 聚合器
 	fsmCfg := fsm.DefaultConfig()
-	mgr := fsm.New(fsmCfg, alarm.AttackEmitter{Pub: pub})
+	mgr := fsm.New(fsmCfg, alarm.AttackEmitter{Pub: pub, Evidence: rtStore})
 	det := detector.New(detector.DefaultConfig(), mgr)
 
 	batchSink := logBatchSink{log: logger}
@@ -154,6 +160,7 @@ func run(cfg config) error {
 		"zones", det.ZoneCount(), "active_attacks", mgr.ActiveCount(),
 		"flushed_rows", rows,
 		"alarms_published", ast.Published, "alarms_dropped", ast.DroppedAlarm,
+		"evidence_keys", rtStore.Len(),
 		"run_err", runErr, "flush_err", flushErr)
 	if runErr != nil && ctx.Err() == nil {
 		return fmt.Errorf("analytics: pipeline: %w", runErr)

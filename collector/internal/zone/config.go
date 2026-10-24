@@ -6,8 +6,11 @@ import (
 	"net/netip"
 )
 
-// ParseSpecsJSON —— 开发期 /lucid/zones 快照加载（JSON 镜像 proto ZoneSpec，docs/09 §5）。
-// 生产路径：etcd watch → 反序列化 → Matcher.Update（≤2s 生效 SLA，docs/09 §5）。
+// ParseSpecsJSON —— /lucid/zones **信封内 data 负载**解析（JSON 镜像 proto ZoneSpec，
+// docs/09 §5）。裸 payload 入口已收进信封路径之后：调用方须先经 internal/etcdcfg
+// 解信封（09 §5 2026-10-25 裁定），本函数只解析 Envelope.Data。
+// 生产路径：etcd watch → etcdcfg.Decode → 版本守卫 → 本函数 → Matcher.Update
+// （≤2s 生效 SLA，docs/09 §5）。
 func ParseSpecsJSON(data []byte) ([]ZoneSpec, error) {
 	var raw []zoneSpecJSON
 	if err := json.Unmarshal(data, &raw); err != nil {

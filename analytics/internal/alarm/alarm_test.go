@@ -1,9 +1,11 @@
 package alarm
 
 import (
+	"context"
 	"errors"
 	"testing"
 
+	"github.com/SchearLoe/lucidnet/analytics/internal/rtkeys"
 	"github.com/SchearLoe/lucidnet/shared"
 )
 
@@ -124,4 +126,42 @@ func TestAttackEmitter(t *testing.T) {
 	if got := len(pub.Alarms()); got != 1 {
 		t.Fatalf("channel len = %d, want 1", got)
 	}
+}
+
+// TestAttackEmitterEvidence —— 证据快照落 rt:evidence:{attack_id}（09 §6 裁定）。
+func TestAttackEmitterEvidence(t *testing.T) {
+	t.Parallel()
+	pub := NewDevPublisher(4)
+	store := rtkeys.NewDevStore()
+	em := AttackEmitter{Pub: pub, Evidence: store}
+
+	id := "01M5QFT1DERVPQN97F92A3QJ2B"
+	em.EmitAttack(&shared.AttackEvent{
+		AttackID:     id,
+		Status:       shared.AttackConfirmed,
+		EvidenceJSON: `{"syn_ratio":1}`,
+	})
+	em.EmitAttack(&shared.AttackEvent{AttackID: "e2", Status: shared.AttackCandidate}) // 空 evidence 不落
+
+	got, ok := store.Get(context.Background(), rtkeys.Evidence(id))
+	if !ok || string(got) != `{"syn_ratio":1}` {
+		t.Fatalf("evidence snapshot = %q ok=%v, want syn json under rt:evidence key", got, ok)
+	}
+	if store.Len() != 1 {
+		t.Fatalf("store len = %d, want 1 (empty evidence json skipped)", store.Len())
+	}
+
+	// 证据落点失败不影响告警发布路径
+	em2 := AttackEmitter{Pub: pub, Evidence: failingSink{}}
+	em2.EmitAttack(&shared.AttackEvent{AttackID: "e3", Status: shared.AttackConfirmed, EvidenceJSON: "x"})
+	if got := len(pub.Alarms()); got != 3 {
+		t.Fatalf("alarm publish must survive evidence sink error, alarms=%d", got)
+	}
+}
+
+// failingSink —— 恒失败的证据落点。
+type failingSink struct{}
+
+func (failingSink) SetEvidence(context.Context, string, []byte) error {
+	return errors.New("redis down")
 }

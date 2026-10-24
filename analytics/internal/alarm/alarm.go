@@ -7,6 +7,7 @@
 package alarm
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -163,9 +164,18 @@ func (p *KafkaPublisher) PublishAttackMinutes(*shared.AttackMinuteBatch) error {
 // Close —— 桩。
 func (p *KafkaPublisher) Close() error { return nil }
 
-// AttackEmitter —— fsm.Emitter 适配器：状态机事件 → alarms topic。
+// EvidenceSink —— 攻击证据快照落点（09 §6 2026-10-25 裁定：Redis
+// rt:evidence:{attack_id}，TTL 24h；由 rtkeys.Store 实现——键名与 TTL 归
+// rtkeys 裁定，本接口不感知键格式）。
+type EvidenceSink interface {
+	SetEvidence(ctx context.Context, attackID string, payload []byte) error
+}
+
+// AttackEmitter —— fsm.Emitter 适配器：状态机事件 → alarms topic；
+// 可选将 evidence_json 落证据快照（rt:evidence:{attack_id}）。
 type AttackEmitter struct {
-	Pub Publisher
+	Pub      Publisher
+	Evidence EvidenceSink // 可为 nil：不落快照（M2 接 Redis，09 §6）
 }
 
 // EmitAttack 实现 fsm.Emitter。
@@ -177,5 +187,8 @@ func (e AttackEmitter) EmitAttack(ev *shared.AttackEvent) {
 	if err := e.Pub.PublishAlarm(env); err != nil {
 		// 开发模式下缓冲满属预期；生产实现接重试/指标（TODO M2，docs/11 §9）
 		_ = err
+	}
+	if e.Evidence != nil && ev.EvidenceJSON != "" {
+		_ = e.Evidence.SetEvidence(context.Background(), ev.AttackID, []byte(ev.EvidenceJSON))
 	}
 }

@@ -29,21 +29,51 @@ flags（骨架本地配置；生产为 etcd watch，dd/02 §6；环境变量约�
 
 | flag | 缺省 | 说明 |
 |---|---|---|
-| `-listen` | `:2055` | NetFlow v5/v9/IPFIX UDP（hld/02 §4） |
-| `-sflow-listen` | 禁用 | sFlow UDP（生产 `:6343`） |
+| `-listen` | `:2055` | NetFlow v5/v9/IPFIX UDP（hld/02 §4；node 配置可覆盖） |
+| `-sflow-listen` | 禁用 | sFlow UDP（生产 `:6343`；node 配置可覆盖） |
+| `-node` | 主机名 | 节点 ID（`/lucid/config/collector/{node}` 键尾） |
 | `-out` | `console` | `console` / `file` / `kafka`（kafka=franz-go 桩，Produce 返回 not implemented） |
 | `-out-file` | `flows.jsonl` | `out=file` 输出文件（JSON 行追加） |
 | `-kafka-brokers` | — | `out=kafka` 时必填 |
-| `-zones-file` | — | `/lucid/zones` 快照 JSON（开发替身；生产 etcd watch → `zone.Matcher.Update`） |
-| `-zone-match` | `dst` | `dst` / `src`（docs/09 §3，**禁止 both**） |
+| `-zones-file` | — | `/lucid/zones` **值快照（信封 JSON）**，etcd watch 开发替身 |
+| `-node-config-file` | — | `/lucid/config/collector/{node}` 值快照（信封 JSON），开发替身 |
+| `-zone-match` | `dst` | `dst` / `src`（docs/09 §3，**禁止 both**；node 配置可覆盖） |
 | `-rib-file` | — | RIB 快照 JSON（RibNameLookup 开发替身；缺省 gRPC 桩） |
-| `-snmp` | 关 | 启动 SNMP 调度器（gosnmp 桩，无设备空转，仅演示组装位） |
+| `-snmp` | 关 | 启动 SNMP 轮询调度器（gosnmp 桩，无设备空转，仅演示组装位） |
 
-zones.json / rib.json 格式：
+### etcd 值信封（docs/09 §5 2026-10-25 裁定）
+
+`/lucid/zones`、`/lucid/forward/rules`、`/lucid/config/analytics`、`/lucid/config/collector/{node}`
+四个配置键的值统一为信封（`/lucid/assign/flow` 与 `/lucid/leader` 不适用）：
 
 ```json
-[{"id":7,"name":"cust-a","tenant":"t1","ips":[{"prefix":"203.0.113.0/24"}],"policy_id":1}]
+{"version": 3, "updated_at": "2026-10-25T08:00:00Z", "data": <业务负载 JSON>}
 ```
+
+collector 侧消费规则（`internal/etcdcfg`）：
+
+- 配置入口**先解信封再取 `data`**，裸 payload（无信封字段）一律报错——与 Master 写侧约定一致；
+- `version` ≤ 已应用版本（乱序回放/同版本重发）→ 忽略本次更新并日志/计数（`Guard.StaleTotal`，防乱序回放）；
+  守卫为两阶段（`ShouldApply` 判定 + 应用成功后 `MarkApplied`），坏负载不吞同版本重发；
+- `updated_at` 仅记录（日志字段），不参与应用判定；
+- 文件快照（`-zones-file` / `-node-config-file`）即 etcd 值原文替身，走同一入口。
+
+zones.json（信封）与 node-config.json（信封）示例：
+
+```json
+{"version": 3, "updated_at": "2026-10-25T08:00:00Z",
+ "data": [{"id":7,"name":"cust-a","tenant":"t1","ips":[{"prefix":"203.0.113.0/24"}],"policy_id":1}]}
+```
+```json
+{"version": 2, "updated_at": "2026-10-25T08:00:01Z",
+ "data": {"listen": ":2055", "zone_match": "dst",
+          "sample_registry": {"10.0.0.1": 1000},
+          "naming_rules": [{"pattern": "(?i)(to-|-agg-)", "role": "internal"}],
+          "rib_snapshot_ptr": "rib@20261025"}}
+```
+
+rib.json（RIB 快照，**非 etcd 键**，RibNameLookup gRPC 的开发替身，不走信封）：
+
 ```json
 [{"prefix":"203.0.113.0/24","asn":64512,"peer_as":64500}]
 ```
@@ -53,10 +83,12 @@ zones.json / rib.json 格式：
 ## 包结构
 
 ```
-cmd/lucid-collector/    main.go 组装（dispatcher → decoder → enrich → producer；signal 优雅退出）
+cmd/lucid-collector/    main.go 组装（dispatcher → decoder → enrich → producer；signal 优雅退出；信封配置入口）
 internal/decoder/       NetFlow v5 完整实现；v9/IPFIX/sFlow goflow2 fork 桩；模板缓存 + WAL
 internal/zone/          双栈 Zone 匹配器（R2 关键路径：单 IP 哈希 + v4/v6 radix LPM + COW 热更新）
 internal/enrich/        富化流水线编排（ASN→Geo→App→Zone→IfRole）+ RIB 客户端
+internal/etcdcfg/       etcd 配置值信封解码（09 §5 裁定）+ 版本守卫（防乱序回放）
+internal/nodecfg/       /lucid/config/collector/{node} 负载镜像（端口/采样登记表/命名正则/RIB 指针）
 internal/producer/      flows.raw 生产接口（franz-go 桩 + console/file 开发实现）
 internal/snmp/          轮询调度器 + gosnmp 桩 + 接口角色识别引擎（dd/02 §5.2 优先级表）
 ```
@@ -77,7 +109,9 @@ internal/snmp/          轮询调度器 + gosnmp 桩 + 接口角色识别引擎�
 | flows.raw 生产接口：key=`shared.FlowKey(zone_id, exporter)`；参数 linger 50ms / batch 64KB / lz4 / acks=leader / 背压 100MB（常量即契约）；console/file JSON 行开发实现 | `internal/producer/` | §4 |
 | SNMP 轮询调度器（per-device 到期表 + 40 worker 限并发；计数器 30s / 健康 60s / 光功率 300s；错误计错不外抛；审计流 CountersSink 接口） | `internal/snmp/scheduler.go` | §5.1 |
 | 接口角色识别引擎：manual > 环回/管理口 > LLDP∈纳管清单 > IGP 邻接 > 命名规则（dd/02 预置正则）> 默认 boundary+unknown；role_source + evidence_json | `internal/snmp/role.go` | §5.2 |
-| main 组装：版本分流 dispatcher、双端口（NetFlow/sFlow）、JSON 单行日志、周期计数、优雅退出；e2e 冒烟测试（UDP v5 → 富化 → file 输出断言） | `cmd/lucid-collector/` | — |
+| **etcd 配置值信封消费（09 §5 2026-10-25 裁定）**：严格解信封（裸 payload 报错，payload 解析全部在解包之后）；两阶段版本守卫（≤已应用版本忽略 + stale 计数；应用成功才记账）；updated_at 仅记录 | `internal/etcdcfg/` | 09 §5 |
+| **per-node 配置**：`/lucid/config/collector/{node}` 负载镜像（端口/采样登记表/命名正则/RIB 快照指针）；zone_match 与监听地址 etcd 值覆盖本地 flag，即时生效 | `internal/nodecfg/` + `cmd/lucid-collector/main.go` applyNodeConfig | 09 §5 |
+| main 组装：版本分流 dispatcher、双端口（NetFlow/sFlow）、信封配置入口（zones/node-config）、JSON 单行日志、周期计数、优雅退出；e2e 冒烟测试（UDP v5 → 信封配置富化 → file 输出断言） | `cmd/lucid-collector/` | — |
 
 ### TODO（桩/未接通，标注落点）
 
@@ -91,8 +125,9 @@ internal/snmp/          轮询调度器 + gosnmp 桩 + 接口角色识别引擎�
 | gosnmp 轮询器（v2c/v3、ifHC* walk、健康/光功率 OID）+ PG devices 设备清单接入 | `internal/snmp/poller.go` | §5.1 |
 | 角色识别数据面：ifTable/LLDP/OSPF walk（6h 周期）→ RoleEvidence 填充；识别结果写 PG `interfaces(role, role_source, evidence_json)`；etcd 快照推送 | `internal/snmp/role.go` | §5.2 |
 | ifIndex 对账校验（防漂移：flow 速率 vs SNMP 速率皮尔逊相关 <0.5 告警 → manual_if_map） | `internal/snmp/role.go` TODO(role-pipeline) | §5.2 |
-| etcd watch 配置面（/lucid/zones、/lucid/config/collector/{node}、/lucid/assign/flow） | `cmd/lucid-collector/main.go`（文件快照为开发替身） | §6 / 09 §5 |
-| Prometheus 指标（lucid_collector_*，40+ 项）与结构化 JSON logger | `cmd/lucid-collector/main.go`（原子计数 + JSON 行日志为骨架替身） | §6 |
+| etcd watch 循环（/lucid/zones、/lucid/config/collector/{node} 增量推送到 applyZonesSnapshot/applyNodeConfig；/lucid/assign/flow 非信封另行消费）——信封解码与版本守卫已就位，差 watch 接线 | `cmd/lucid-collector/main.go`（文件快照为开发替身） | §6 / 09 §5 |
+| node 配置字段接线：采样登记表 → v5 per-exporter 采样覆盖；命名正则表 → snmp.RuleEngine；RIB 快照指针 → RIB Feeder 拉取；监听地址变更热重载（重建 socket） | `internal/nodecfg/` 注释 + `cmd/lucid-collector/main.go` | §1 #3 / §5.2 / §3.1 |
+| Prometheus 指标（lucid_collector_*，40+ 项）与结构化 JSON logger（含 `config_stale_total` 打点） | `cmd/lucid-collector/main.go`（原子计数 + JSON 行日志为骨架替身） | §6 |
 | RIB 真实路径：gRPC RibNameLookup（Lookup/GetSnapshot/WatchSnapshot）+ 本地 radix 缓存 + `enrich_rib_stale` 降级告警 | `internal/enrich/rib.go` | §3.1 |
 | GeoIP mmdb / PG 应用映射表 / PG interfaces 快照真实数据源 | `internal/enrich/` | §3.2/§3.4 |
 | SO_REUSEPORT 多 socket 并行解码（单节点 30w flows/s） | `cmd/lucid-collector/main.go` | §1/§6 |
@@ -100,5 +135,5 @@ internal/snmp/          轮询调度器 + gosnmp 桩 + 接口角色识别引擎�
 ## 约束遵循说明
 
 - docs/11：包名无黑名单词；文件 snake_case；错误 `%w` 包裹；typed enum（`zone.MatchField`、`enrich.IfRole`、`decoder.TemplateEventKind` 等）；指标/日志命名按 §9 注释标注。
-- 跨模块依赖仅经 `shared/`（FlowRecord/Topic/FlowKey/ZoneSide/IfRole 常量）与 09 契约接口（RibNameLookup 桩）。
+- 跨模块依赖仅经 `shared/`（FlowRecord/Topic/FlowKey/ZoneSide/IfRole/EtcdKey* 常量）、09 契约接口（RibNameLookup 桩）与 Master 写侧信封线格式（`internal/etcdcfg` 消费侧镜像）。
 - 全部代码可移植（无 Linux 专有调用，无需 `//go:build linux` 隔离）。

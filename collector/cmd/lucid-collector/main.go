@@ -26,6 +26,8 @@ import (
 
 	"github.com/SchearLoe/lucidnet/collector/internal/decoder"
 	"github.com/SchearLoe/lucidnet/collector/internal/enrich"
+	"github.com/SchearLoe/lucidnet/collector/internal/etcdcfg"
+	"github.com/SchearLoe/lucidnet/collector/internal/nodecfg"
 	"github.com/SchearLoe/lucidnet/collector/internal/producer"
 	"github.com/SchearLoe/lucidnet/collector/internal/snmp"
 	"github.com/SchearLoe/lucidnet/collector/internal/zone"
@@ -35,30 +37,43 @@ import (
 // flags —— 骨架本地配置（dd/02 §6：生产配置全量 etcd，本地仅 bind 地址；
 // 环境变量约定 LUCID_COLLECTOR_* 见 docs/11 §8）。
 type flags struct {
-	listen       string // NetFlow v5/v9/IPFIX UDP（hld/02 §4：2055/9995/9996）
-	sflowListen  string // sFlow UDP（版本字段与 NetFlow v5 冲突，按端口分流；空=禁用）
-	out          string // console | file | kafka（kafka=franz-go 桩）
-	outFile      string
-	kafkaBrokers string
-	zonesFile    string // /lucid/zones 快照（开发：etcd watch 本地替身）
-	zoneMatch    string // dst|src（docs/09 §3，默认 dst，禁止 both）
-	ribFile      string // RIB 快照文件（开发：RibNameLookup gRPC 替身）
-	runSNMP      bool   // 启动 SNMP 调度器（gosnmp 桩，无设备即空转）
+	listen         string // NetFlow v5/v9/IPFIX UDP（hld/02 §4：2055/9995/9996）
+	sflowListen    string // sFlow UDP（版本字段与 NetFlow v5 冲突，按端口分流；空=禁用）
+	node           string // 节点 ID（/lucid/config/collector/{node} 键尾；缺省主机名）
+	zonesFile      string // /lucid/zones 值快照（信封 JSON；etcd watch 开发替身）
+	nodeConfigFile string // /lucid/config/collector/{node} 值快照（信封 JSON；开发替身）
+	zoneMatch      string // dst|src（docs/09 §3，默认 dst，禁止 both；node 配置可覆盖）
+	out            string // console | file | kafka（kafka=franz-go 桩）
+	outFile        string
+	kafkaBrokers   string
+	ribFile        string // RIB 快照文件（开发：RibNameLookup gRPC 替身）
+	runSNMP        bool   // 启动 SNMP 调度器（gosnmp 桩，无设备即空转）
 }
 
 func parseFlags() flags {
 	var f flags
-	flag.StringVar(&f.listen, "listen", ":2055", "NetFlow v5/v9/IPFIX UDP 监听地址")
-	flag.StringVar(&f.sflowListen, "sflow-listen", "", "sFlow UDP 监听地址（默认禁用；生产 :6343，hld/02 §4）")
+	flag.StringVar(&f.listen, "listen", ":2055", "NetFlow v5/v9/IPFIX UDP 监听地址（可被 node 配置覆盖）")
+	flag.StringVar(&f.sflowListen, "sflow-listen", "", "sFlow UDP 监听地址（默认禁用；生产 :6343，hld/02 §4；可被 node 配置覆盖）")
+	flag.StringVar(&f.node, "node", defaultNode(), "节点 ID（/lucid/config/collector/{node} 键尾；缺省主机名）")
+	flag.StringVar(&f.zonesFile, "zones-file", "", "/lucid/zones 值快照（信封 JSON，etcd watch 开发替身）")
+	flag.StringVar(&f.nodeConfigFile, "node-config-file", "", "/lucid/config/collector/{node} 值快照（信封 JSON，开发替身）")
+	flag.StringVar(&f.zoneMatch, "zone-match", "dst", "zone 匹配面：dst | src（docs/09 §3，禁止 both；node 配置可覆盖）")
 	flag.StringVar(&f.out, "out", "console", "输出模式：console | file | kafka（kafka 为 franz-go 桩）")
 	flag.StringVar(&f.outFile, "out-file", "flows.jsonl", "out=file 时的输出文件（JSON 行追加）")
 	flag.StringVar(&f.kafkaBrokers, "kafka-brokers", "", "out=kafka 时的 broker 列表（逗号分隔）")
-	flag.StringVar(&f.zonesFile, "zones-file", "", "Zone 配置快照 JSON（/lucid/zones 开发替身；空=无 zone）")
-	flag.StringVar(&f.zoneMatch, "zone-match", "dst", "zone 匹配面：dst | src（docs/09 §3，禁止 both）")
 	flag.StringVar(&f.ribFile, "rib-file", "", "RIB 快照 JSON（RibNameLookup 开发替身；空=gRPC 桩）")
 	flag.BoolVar(&f.runSNMP, "snmp", false, "启动 SNMP 轮询调度器（gosnmp 桩）")
 	flag.Parse()
 	return f
+}
+
+// defaultNode —— 节点 ID 缺省：主机名（注册键与 Master 登记一致；取不到退 local）。
+func defaultNode() string {
+	h, err := os.Hostname()
+	if err != nil || h == "" {
+		return "local"
+	}
+	return h
 }
 
 // counters —— 骨架自监控计数（生产 = Prometheus lucid_collector_*，docs/11 §9）。
@@ -105,6 +120,10 @@ func run(f flags) error {
 
 // runCollector —— 组装并运行至 ctx 取消（main 与 e2e 测试共用）。
 func runCollector(ctx context.Context, f flags) error {
+	// —— 配置入口（etcd 值信封，09 §5 2026-10-25 裁定；文件快照为 watch 开发替身）——
+	// 所有信封键共用版本守卫：乱序回放（≤已应用版本）忽略并日志打点。
+	guard := etcdcfg.NewGuard()
+
 	// —— Zone 匹配器（R2 关键路径）——
 	matchField, err := zone.ParseMatchField(f.zoneMatch)
 	if err != nil {
@@ -112,14 +131,36 @@ func runCollector(ctx context.Context, f flags) error {
 	}
 	matcher := zone.NewMatcher(matchField)
 	if f.zonesFile != "" {
-		specs, err := loadZoneSpecs(f.zonesFile)
+		data, err := os.ReadFile(f.zonesFile)
 		if err != nil {
-			return err
+			return fmt.Errorf("read zones file %s: %w", f.zonesFile, err)
 		}
-		if err := matcher.Update(specs); err != nil {
-			return fmt.Errorf("zone update from %s: %w", f.zonesFile, err)
+		if err := applyZonesSnapshot(matcher, guard, data); err != nil {
+			return fmt.Errorf("zones file %s: %w", f.zonesFile, err)
 		}
-		logJSON("zones loaded", map[string]any{"file": f.zonesFile, "zones": len(specs)})
+	}
+
+	// —— per-node 配置（/lucid/config/collector/{node}；09 §5：端口/采样登记表/
+	// 命名正则/RIB 快照指针；zone_match 与监听地址即时生效，其余字段 TODO 接线）——
+	var nodeCfg nodecfg.Config
+	if f.nodeConfigFile != "" {
+		data, err := os.ReadFile(f.nodeConfigFile)
+		if err != nil {
+			return fmt.Errorf("read node config %s: %w", f.nodeConfigFile, err)
+		}
+		nodeCfg, err = applyNodeConfig(matcher, guard, f.node, data)
+		if err != nil {
+			return fmt.Errorf("node config %s: %w", f.nodeConfigFile, err)
+		}
+	}
+	listen, sflowListen := f.listen, f.sflowListen
+	if nodeCfg.Listen != "" {
+		listen = nodeCfg.Listen
+		logJSON("node config overrides listen", map[string]any{"listen": listen})
+	}
+	if nodeCfg.SFlowListen != "" {
+		sflowListen = nodeCfg.SFlowListen
+		logJSON("node config overrides sflow listen", map[string]any{"sflow_listen": sflowListen})
 	}
 
 	// —— RIB（ASN/前缀富化源，dd/02 §3.1）——
@@ -152,17 +193,17 @@ func runCollector(ctx context.Context, f flags) error {
 	// —— UDP 监听（TODO(reuseport)：生产多 socket 并行解码，dd/02 §1）——
 	var wg sync.WaitGroup
 	conns := make([]*net.UDPConn, 0, 2)
-	netflowConn, err := listenUDP(f.listen)
+	netflowConn, err := listenUDP(listen)
 	if err != nil {
 		return err
 	}
 	conns = append(conns, netflowConn)
 	wg.Add(1)
 	go serveUDP(ctx, &wg, netflowConn, dispatch.handleNetFlow, st)
-	logJSON("listening", map[string]any{"addr": f.listen, "proto": "netflow"})
+	logJSON("listening", map[string]any{"addr": listen, "proto": "netflow"})
 
-	if f.sflowListen != "" {
-		sflowConn, err := listenUDP(f.sflowListen)
+	if sflowListen != "" {
+		sflowConn, err := listenUDP(sflowListen)
 		if err != nil {
 			netflowConn.Close()
 			return err
@@ -170,7 +211,7 @@ func runCollector(ctx context.Context, f flags) error {
 		conns = append(conns, sflowConn)
 		wg.Add(1)
 		go serveUDP(ctx, &wg, sflowConn, dispatch.handleSFlow, st)
-		logJSON("listening", map[string]any{"addr": f.sflowListen, "proto": "sflow"})
+		logJSON("listening", map[string]any{"addr": sflowListen, "proto": "sflow"})
 	}
 
 	// —— SNMP 调度器（gosnmp 桩；设备清单来自 PG devices，TODO(dd/02 §5.1)）——
@@ -220,17 +261,77 @@ func runCollector(ctx context.Context, f flags) error {
 	return nil
 }
 
-// loadZoneSpecs —— /lucid/zones 快照文件（开发替身；生产 = etcd watch → 同一 Update 路径）。
-func loadZoneSpecs(path string) ([]zone.ZoneSpec, error) {
-	data, err := os.ReadFile(path)
+// applyZonesSnapshot —— /lucid/zones 值（信封，09 §5）：
+// 解信封 → 版本守卫 → 裸 payload 解析 → 原子换树（COW）。
+// 生产 watch 路径（etcd watch → 本函数）与文件替身共用此入口；
+// 裸 payload（无信封）在此报错，payload 解析全部发生在信封解包之后。
+func applyZonesSnapshot(m *zone.Matcher, g *etcdcfg.Guard, data []byte) error {
+	env, err := etcdcfg.Decode(data)
 	if err != nil {
-		return nil, fmt.Errorf("read zones file %s: %w", path, err)
+		return fmt.Errorf("decode %s envelope: %w", shared.EtcdKeyZones, err)
 	}
-	specs, err := zone.ParseSpecsJSON(data)
+	if !g.ShouldApply(shared.EtcdKeyZones, env.Version) {
+		logJSON("config stale ignored", map[string]any{
+			"key": shared.EtcdKeyZones, "version": env.Version,
+			"applied_version": g.Applied(shared.EtcdKeyZones),
+		})
+		return nil
+	}
+	specs, err := zone.ParseSpecsJSON(env.Data)
 	if err != nil {
-		return nil, fmt.Errorf("parse zones file %s: %w", path, err)
+		return fmt.Errorf("parse %s payload v%d: %w", shared.EtcdKeyZones, env.Version, err)
 	}
-	return specs, nil
+	if err := m.Update(specs); err != nil {
+		return fmt.Errorf("apply %s v%d: %w", shared.EtcdKeyZones, env.Version, err)
+	}
+	g.MarkApplied(shared.EtcdKeyZones, env.Version)
+	logJSON("config applied", map[string]any{
+		"key": shared.EtcdKeyZones, "version": env.Version,
+		"updated_at": env.UpdatedAt.Format(time.RFC3339), "zones": len(specs),
+	})
+	return nil
+}
+
+// applyNodeConfig —— /lucid/config/collector/{node} 值（信封，09 §5）：
+// 解信封 → 版本守卫 → 负载解析 → 应用。返回负载供调用方接线（监听地址等）。
+//
+// 即时生效：zone_match（热切，覆盖本地 flag 缺省，dd/02 §6 配置全量 etcd）。
+// TODO 接线（nodecfg.Config 注释）：采样登记表 → v5 per-exporter 采样；
+// 命名正则表 → snmp.RuleEngine；RIB 快照指针 → RIB Feeder 拉取；
+// 监听地址变更热重载（需重建 socket）。
+func applyNodeConfig(m *zone.Matcher, g *etcdcfg.Guard, node string, data []byte) (nodecfg.Config, error) {
+	key := shared.EtcdKeyConfigCollector + node
+	env, err := etcdcfg.Decode(data)
+	if err != nil {
+		return nodecfg.Config{}, fmt.Errorf("decode %s envelope: %w", key, err)
+	}
+	if !g.ShouldApply(key, env.Version) {
+		logJSON("config stale ignored", map[string]any{
+			"key": key, "version": env.Version, "applied_version": g.Applied(key),
+		})
+		return nodecfg.Config{}, nil
+	}
+	cfg, err := nodecfg.Parse(env.Data)
+	if err != nil {
+		return nodecfg.Config{}, fmt.Errorf("parse %s payload v%d: %w", key, env.Version, err)
+	}
+	if cfg.ZoneMatch != "" {
+		mf, err := zone.ParseMatchField(cfg.ZoneMatch)
+		if err != nil {
+			return nodecfg.Config{}, fmt.Errorf("apply %s v%d zone_match: %w", key, env.Version, err)
+		}
+		m.SetMatchField(mf)
+	}
+	g.MarkApplied(key, env.Version)
+	logJSON("config applied", map[string]any{
+		"key": key, "version": env.Version,
+		"updated_at":              env.UpdatedAt.Format(time.RFC3339),
+		"zone_match":              m.MatchField().String(),
+		"sample_registry_entries": len(cfg.SampleRegistry),
+		"naming_rules":            len(cfg.NamingRules),
+		"rib_snapshot_ptr":        cfg.RIBSnapshotPtr,
+	})
+	return cfg, nil
 }
 
 // newProducer —— 按 -out 构造输出。

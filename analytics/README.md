@@ -12,6 +12,7 @@ internal/detector/       Zone 秒级检测引擎（R2/R7）：ring60/ring5m、SY
 internal/detector/…      依赖子包 internal/hll（紧凑 HyperLogLog，2^14 寄存器 4bit 打包）
 internal/fsm/            攻击状态机（dd/03 §6.1 全转移路径）+ ULID
 internal/alarm/          alarms 发布接口：内存 channel 开发实现 + Kafka 桩；AttackEvent→AlarmEnvelope
+internal/rtkeys/         Redis 实时键契约（09 §6 rt:* 前缀）：TopN/证据键构造+TTL、Store 接口+内存桩
 ```
 
 ## 运行
@@ -51,6 +52,7 @@ go run ./cmd/lucid-analytics -mode=kafka -brokers=10.0.0.1:9092 -group=analytics
 | FSM（dd/03 §6.1/§6.3） | 完整+单测 | CANDIDATE→CONFIRMED→RECOVERED→CLOSED、3s 静默关闭、120s 恢复、60s 展示、60s 合并窗沿用 ULID、MITIGATING（bgp.mitigations applied/withdrawn/failed）、基线×1.3 持续 60s→RESOLVED、反弹重置计时；RECOVERED/RESOLVED 与 shared.AttackStatus 映射差异已在 state.go 注明 |
 | srcAgg + CMS 桩（dd/03 §3.1） | 实现降级路径+桩 | 每源 pkts/bytes/dstIPs(HLL p=6)/ports(set16)；上限 50,000，超限走 `CountMinSketch` 接口桩（TODO M2 CM16×65536） |
 | alarms 发布（09 §2） | 接口+内存实现+Kafka 桩 | topic=shared.TopicAlarms；severity/category 映射；AttackEvent 信封 |
+| Redis 实时键（09 §6 2026-10-25 裁定） | 键契约+桩 | 统一 `rt:*` 前缀（dd/03 §7 旧文 `topn:{dim}:{ts}` 作废）：`rt:topn:{dim}:{ts}`（TTL 10m）、`rt:evidence:{attack_id}`（TTL 24h）集中定义于 `internal/rtkeys`，键名只经该包构造；`Store` 接口+DevStore 内存桩，`alarm.AttackEmitter` 已将 evidence_json 落 `rt:evidence:{attack_id}` |
 | flows.raw 消费（dd/03 §1） | 接口+JSONL 回放+Kafka 桩 | 组名白名单校验（analytics.detect / analytics.aggregate，09 §2） |
 
 ## TODO（M2，标注 dd/03 章节）
@@ -58,9 +60,9 @@ go run ./cmd/lucid-analytics -mode=kafka -brokers=10.0.0.1:9092 -group=analytics
 1. Kafka 接入：franz-go 消费（§1：分区并行 ≤96、每分区 PartitionState、批 5,000）与 alarms/aggr/attack-minutes 生产（09 §2：proto+lz4、linger=50ms）。
 2. 规则组补全：ACK/RST、UDP 弥散/固定端口、ICMP/分片、反射放大 REFLECTION（§4.1）；扫段慢扫 60s 复检（阈值减半 slow=true，§4.2）与 v6 跨 /64 第二层 /48 聚合（§4.2 v6 适配）。
 3. 基线引擎（§5）：minute-of-week t-digest+MAD、7 天学习、每小时固化 CH baseline、Learning 期绝对阈值兜底接线（`detector.BaselineProvider`）。
-4. TopN（§7）：滚动 1m/5m Top-K 堆+桶衰减、Redis rt:* 写入。
+4. TopN（§7）：滚动 1m/5m Top-K 堆+桶衰减，经 `rtkeys.Store.SetTopN` 写 `rt:topn:{dim}:{ts}`（TTL 10m；09 §6 裁定键名，旧写法 `topn:{dim}:{ts}` 作废）。
 5. AttackMinute 分钟详情固化（§6.2）：攻击期间每分钟一行+end 标记，`alarm.Publisher.PublishAttackMinutes` 已留接口。
-6. 证据快照 Redis TTL 24h（§6.1）；MITIGATING 效果评分 mitigation_effect（§6.3）。
+6. 证据快照（§6.1）：evidence_json 已落 `rt:evidence:{attack_id}`（TTL 24h，09 §6）；M2 换真实 Redis 实现并补全快照内容（Top 源 100/端口分布/熵曲线/基线对照曲线）；MITIGATING 效果评分 mitigation_effect（§6.3）。
 7. etcd 配置 watch（09 §5：/lucid/config/analytics 信封解包：internal_exclude、阈值覆盖、维护静默）+ Leader 选举（§4 部署）。
 8. Prometheus 指标（docs/11 §9：lucid_analytics_*）与 trace 贯穿（x-lucid-trace-id）。
 9. 性能验收（§9：100w fps、P99<100ms、kill -9 再平衡）。
@@ -73,3 +75,4 @@ go run ./cmd/lucid-analytics -mode=kafka -brokers=10.0.0.1:9092 -group=analytics
 4. **sweep cell 内存口径冲突**：任务指令 2^14 寄存器=8KB/cell（×4,096=32MB/zone）vs dd/03 §3.2 预算表 2KB/段（≈2^12）；当前按任务指令实现。
 5. **dd/03 §4.2 "源集中度<0.2" 无定义**：实现取 distinct_src/distinct_dst<0.2（少源多点），需设计裁定。
 6. **ANOMALY 分钟级确认通道（§4.3 ②）依赖基线引擎**，骨架仅秒级通道（①）。
+7. **rt:* 键常量建议镜像进 shared**：Redis 实时键是跨模块契约（09 §6：Analytics 写、网关轮询/Console 读），与 topic/etcd 键同类；现集中在本模块 `internal/rtkeys`（本任务无权改 shared），建议按 09 §5 shared 镜像先例登记后迁移。
