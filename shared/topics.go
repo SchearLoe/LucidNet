@@ -27,6 +27,7 @@ const (
 	GroupStorageInserterAlarms  = "storage.inserter.alarms"  // alarms → attacks/告警历史
 	GroupBGPAlarmLink      = "bgp.alarmlink"           // alarms → LucidBGP 处置联动
 	GroupGatewayWS         = "gateway.ws"              // alarms/bgp.mitigations → WS 推送
+	GroupMasterHeartbeat   = "master.heartbeat"        // cluster.heartbeat 的 Master 副本消费（可选通道；2026-10-25 裁定登记 09 §2）
 )
 
 // FlowKey —— flows.raw 消息 key：zone_id(4B 大端) + exporter（同客户同分区，检测无锁并行）
