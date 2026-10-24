@@ -1,0 +1,201 @@
+/** 全局样式（docs/10 §3：密度优先/等宽数字/紧凑表格 32px 行高）。 */
+@import "@lucid/shared/tokens.css";
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--lucid-font-ui);
+  font-size: var(--lucid-size-14);
+  line-height: 1.5;
+  color: var(--lucid-text);
+  background: var(--lucid-bg);
+}
+
+/* 数据（IP/端口/ASN/速率/时间戳/ID）必用等宽（docs/10 §3.2） */
+.mono {
+  font-family: var(--lucid-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.num {
+  font-family: var(--lucid-font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* 布局骨架（docs/10 §3.4：侧栏 224 / 页头 48 / 内容边距 16） */
+.shell {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: var(--lucid-sidebar-w);
+  background: var(--lucid-surface);
+  border-right: 1px solid var(--lucid-border);
+  padding: 12px 8px;
+  flex-shrink: 0;
+}
+
+.sidebar .brand {
+  font-weight: 600;
+  padding: 8px 12px 16px;
+  letter-spacing: 1px;
+}
+
+.sidebar a {
+  display: block;
+  padding: 8px 12px;
+  border-radius: 6px;
+  color: var(--lucid-text-secondary);
+  text-decoration: none;
+  font-size: var(--lucid-size-14);
+}
+
+.sidebar a.active {
+  background: color-mix(in srgb, var(--lucid-primary) 12%, transparent);
+  color: var(--lucid-primary);
+  font-weight: 600;
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.header {
+  height: var(--lucid-header-h);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--lucid-border);
+  background: var(--lucid-surface);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.content {
+  padding: var(--lucid-pad-content);
+}
+
+/* 断连黄条（docs/10 §3.7） */
+.stream-banner {
+  background: color-mix(in srgb, var(--lucid-warning) 14%, transparent);
+  color: var(--lucid-text);
+  padding: 6px 16px;
+  font-size: var(--lucid-size-13);
+}
+
+/* 卡片 */
+.card {
+  background: var(--lucid-surface);
+  border: 1px solid var(--lucid-border);
+  border-radius: 8px;
+  padding: var(--lucid-pad-content);
+}
+
+.card h3 {
+  margin: 0 0 12px;
+  font-size: var(--lucid-size-13);
+  font-weight: 600;
+  color: var(--lucid-text-secondary);
+}
+
+.grid-kpi {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--lucid-gap-card);
+}
+
+.kpi .label {
+  font-size: var(--lucid-size-12);
+  color: var(--lucid-text-secondary);
+}
+
+.kpi .value {
+  font-family: var(--lucid-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--lucid-size-24);
+}
+
+.kpi .value.in {
+  color: var(--lucid-in);
+}
+
+.kpi .value.out {
+  color: var(--lucid-out);
+}
+
+.kpi .value.attack {
+  color: var(--lucid-attack);
+}
+
+/* 紧凑表格（docs/10 §3.5：行高 32px、数字右对齐等宽、空值 —） */
+table.lucid {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--lucid-surface);
+  font-size: var(--lucid-size-13);
+}
+
+table.lucid th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--lucid-text-secondary);
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--lucid-border);
+  white-space: nowrap;
+}
+
+table.lucid td {
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--lucid-border);
+  height: 32px;
+  white-space: nowrap;
+}
+
+table.lucid th.num,
+table.lucid td.num {
+  text-align: right;
+}
+
+/* 状态徽章（docs/10 §3.1 状态语义配色） */
+.badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: var(--lucid-size-12);
+  border: 1px solid currentColor;
+}
+
+.badge.warning {
+  color: var(--lucid-warning);
+}
+
+.badge.attack {
+  color: var(--lucid-attack);
+}
+
+.badge.primary {
+  color: var(--lucid-primary);
+}
+
+.badge.neutral {
+  color: var(--lucid-neutral);
+}
+
+.badge.success {
+  color: var(--lucid-success);
+}
+
+/* 大屏深色（docs/10 §6） */
+.theme-dark {
+  background: var(--lucid-bg);
+}

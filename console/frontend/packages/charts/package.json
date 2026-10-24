@@ -1,0 +1,8 @@
+{
+  "name": "@lucid/charts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TODO(M2)：ECharts 封装（矩阵热力/速率曲线/基线带），见 README",
+  "main": "src/index.ts",
+  "types": "src/index.ts"
+}

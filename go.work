@@ -7,4 +7,5 @@ use (
 	./analytics
 	./storage
 	./master
+	./console
 )

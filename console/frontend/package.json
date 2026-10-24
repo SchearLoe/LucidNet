@@ -1,0 +1,14 @@
+{
+  "name": "lucidnet-console-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "description": "LucidConsole 前端 monorepo（docs/dd/05 §1：web 主控台 / shared 类型与设计 token / charts 图表封装）",
+  "scripts": {
+    "dev": "pnpm --filter @lucid/web dev",
+    "build": "pnpm --filter @lucid/web build",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

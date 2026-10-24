@@ -1,0 +1,49 @@
+/*
+ * LucidDesign 设计 token（docs/10 §3.1 / §4：所有颜色/字号/间距经 --lucid-* 声明，
+ * 组件禁止硬编码色值/字号；深色主题 = 同名 token 覆盖）。
+ */
+:root {
+  /* 语义色（docs/10 §3.1 唯一色值） */
+  --lucid-primary: #2f6bff;    /* 品牌主色、链接、主按钮、选中态 */
+  --lucid-in: #2f6bff;         /* 流入流量（客户视角 in） */
+  --lucid-out: #fa8c16;        /* 流出流量（out） */
+  --lucid-attack: #f5222d;     /* 攻击/严重告警 */
+  --lucid-baseline: #8c8c8c;   /* 基线带（虚线带 rgba .25） */
+  --lucid-warning: #fa8c16;
+  --lucid-success: #52c41a;
+  --lucid-neutral: #8c8c8c;
+
+  /* 中性面 */
+  --lucid-bg: #f5f6f8;
+  --lucid-surface: #ffffff;
+  --lucid-border: #e5e6eb;
+  --lucid-text: #1d2129;
+  --lucid-text-secondary: #4e5969;
+
+  /* 字体（docs/10 §3.2：数据列必用等宽） */
+  --lucid-font-ui: -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --lucid-font-mono: "JetBrains Mono", Consolas, "Sarasa Mono SC", monospace;
+
+  /* 字号阶梯（docs/10 §3.2：12/13/14/16/20/24，行高 1.5，下限 12px） */
+  --lucid-size-12: 12px;
+  --lucid-size-13: 13px;
+  --lucid-size-14: 14px;
+  --lucid-size-16: 16px;
+  --lucid-size-20: 20px;
+  --lucid-size-24: 24px;
+
+  /* 布局（docs/10 §3.4：侧栏 224 / 页头 48 / 内容边距 16 / 卡片间距 12） */
+  --lucid-sidebar-w: 224px;
+  --lucid-header-h: 48px;
+  --lucid-pad-content: 16px;
+  --lucid-gap-card: 12px;
+}
+
+/* 深色主题（总览大屏，docs/10 §6：底 #0A0F1E） */
+[data-theme="dark"] {
+  --lucid-bg: #0a0f1e;
+  --lucid-surface: rgba(255, 255, 255, 0.04);
+  --lucid-border: rgba(255, 255, 255, 0.08);
+  --lucid-text: #e8eaed;
+  --lucid-text-secondary: #9aa3b2;
+}
