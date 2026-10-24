@@ -1,0 +1,6 @@
+# buf 模块定义（master 模块本地代码gen；线格式权威仍是仓库根 proto/lucidnet/v1/）。
+# 本文件是 service.proto 的逐字副本（仅 go_package 改指本模块），消息/服务命名以
+# proto/ 权威文件为准，不做 buf lint/breaking 检查。
+version: v2
+modules:
+  - path: .

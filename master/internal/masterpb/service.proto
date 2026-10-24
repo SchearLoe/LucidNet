@@ -1,0 +1,76 @@
+syntax = "proto3";
+package lucidnet.v1;
+
+// TEMPORARY module-local codegen copy of proto/lucidnet/v1/service.proto
+// (proto/ 为线格式权威；仓库根 gen/go 尚未建立，本副本仅供 master 模块生成 Go 代码。
+//  gen/go 落地后此文件与生成物应整体迁出，导入方仅限 master 模块内部。)
+option go_package = "github.com/SchearLoe/lucidnet/master/internal/masterpb;lucidnetv1";
+
+// gRPC 服务契约（docs/09 §4）：端口 RibNameLookup=9131，Master=9140
+
+// ---- RIB Feeder 提供，Collector/Analytics 消费（ASN 富化，双栈 LPM） ----
+service RibNameLookup {
+  rpc Lookup(LookupRequest) returns (LookupReply);
+  rpc GetSnapshot(GetSnapshotRequest) returns (RibSnapshot);
+  rpc WatchSnapshot(GetSnapshotRequest) returns (stream RibSnapshot);
+}
+
+message LookupRequest {
+  bytes ip = 1;               // 16B
+}
+message LookupReply {
+  uint32 asn = 1;
+  string prefix = 2;
+  uint32 peer_as = 3;
+  int64  ts_ms = 4;
+}
+message GetSnapshotRequest {}
+message RibSnapshot {
+  uint64 version = 1;         // 单调递增
+  bytes  data = 2;            // 紧凑前缀表 wire 格式（属主：RIB Feeder 定义，见 dd/06 §4）
+}
+
+// ---- Master 控制面（dd/07 §1）；Deploy 命令复用 Heartbeat 下行流（dd/08 §3.1） ----
+service Master {
+  rpc RegisterNode(NodeInfo) returns (NodeAck);
+  rpc Heartbeat(stream NodeStat) returns (stream MasterCmd);
+  rpc PublishConfig(ConfigPublish) returns (ConfigVersion);
+  rpc WatchAssign(WatchAssignRequest) returns (stream AssignTable);
+}
+
+message NodeInfo {
+  string id = 1;
+  string role = 2;            // broker|collector|analytics|storage|master|bgp
+  string host = 3;
+  uint32 cores = 4;
+  uint32 mem_gb = 5;
+}
+message NodeAck {
+  bool ok = 1;
+  string config_json = 2;     // 本节点角色配置
+}
+message NodeStat {
+  string node_id = 1;
+  int64  ts_ms = 2;
+  string metrics_json = 3;    // 自监控指标（Prometheus 为主通道，此为心跳摘要）
+}
+message MasterCmd {
+  string type = 1;            // reload|drain|deploy_command（dd/08 §3.2 Command JSON）
+  string payload_json = 2;
+}
+message ConfigPublish {
+  string scope = 1;           // etcd 键（09 §5）
+  bytes  data = 2;            // proto/JSON
+}
+message ConfigVersion {
+  uint64 version = 1;
+}
+message WatchAssignRequest {}
+message AssignTable {
+  uint64 version = 1;
+  repeated AssignEntry entries = 2;
+}
+message AssignEntry {
+  string exporter = 1;
+  string collector = 2;
+}
