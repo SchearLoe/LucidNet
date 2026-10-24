@@ -1,0 +1,27 @@
+# LucidNet 线格式权威 buf 模块（契约唯一来源：proto/lucidnet/v1/，语义见 docs/00 + docs/09）。
+#
+# 模块根取 proto/lucidnet/v1 而非 proto/：envelope.proto 的 import 写的是
+# "security.proto"（预置缺陷修复后的形态，文件名导入），只有以包目录为模块根才能解析；
+# 禁止为迁就模块根去改 .proto 的 import（契约内容不动）。
+#
+# 生成：在本目录执行 `buf generate`，产物落 ../gen/go/（见 buf.gen.yaml），禁止手改生成物。
+# 生成物与 master/internal/masterpb 临时副本的关系见 gen/go/README.md。
+version: v2
+modules:
+  - path: lucidnet/v1
+lint:
+  use:
+    - STANDARD
+  except:
+    # 服务名 RibNameLookup / Master 是 docs/09 §4 登记的契约名，不加 Service 后缀。
+    - SERVICE_SUFFIX
+    # 模块根即包目录，package lucidnet.v1 相对模块根为空路径，目录匹配规则不适用。
+    - PACKAGE_DIRECTORY_MATCH
+    # RPC 请求/响应消息名（LookupReply、RibSnapshot、NodeAck 等）是 docs/09 §4 登记的契约名，
+    # 且 RibSnapshot / GetSnapshotRequest 被多个 RPC 有意复用；改名=破坏性契约变更，不采纳。
+    - RPC_REQUEST_STANDARD_NAME
+    - RPC_RESPONSE_STANDARD_NAME
+    # 同上：快照复用是有意设计（GetSnapshot/WatchSnapshot 共用 RibSnapshot 等契约形态）。
+    - RPC_REQUEST_RESPONSE_UNIQUE
+# breaking 对照：仓库内暂无基线可对照，且 docs/09 §0 已有人工兼容规则（字段只增不改不删），
+# 故不配置 breaking 块；CI 只做 buf build + buf lint 编译检查，不跑 buf breaking。

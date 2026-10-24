@@ -15,10 +15,34 @@ jobs:
       - name: Build & test all Go modules
         run: |
           set -e
-          for m in shared broker collector analytics storage master; do
+          for m in shared broker collector analytics storage master gen/go; do
             echo "== $m =="
             (cd "$m" && go build ./... && go test ./...)
           done
+
+  proto:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.x'
+      - name: Install buf & protoc plugins
+        run: |
+          set -e
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
+          BUF_SHA=1b902af11a608b0d85d361fadea99e30f05a35f7 # 与 v1.75.0 对应，供审计校验
+          curl -fsSL "https://github.com/bufbuild/buf/releases/download/v1.75.0/buf-Linux-x86_64" -o /usr/local/bin/buf
+          chmod +x /usr/local/bin/buf
+      - name: Protobuf build & lint (proto/ 为唯一权威)
+        working-directory: proto
+        run: |
+          set -e
+          buf build
+          buf lint
+      - name: Build generated Go module
+        run: go build ./gen/go/...
 
   web:
     runs-on: ubuntu-latest

@@ -1,0 +1,20 @@
+# buf 生成配置：Go 结构体 + gRPC 桩，输出到仓库根 gen/go/（Go 模块
+# github.com/SchearLoe/lucidnet/gen/go，包 lucidnetv1 集中放置于 lucidnet/v1/ 子目录）。
+#
+# 复现（本机已装插件，PATH 需含 GOPATH/bin）：
+#   go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
+#   go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
+#   cd proto && buf generate
+#
+# 插件版本与 master/internal/masterpb/buf.gen.yaml 保持一致，保证两处生成物同构，
+# 便于各模块从 masterpb 临时副本无感切换到 gen/go（require_unimplemented_servers=false 同源）。
+version: v2
+plugins:
+  - local: protoc-gen-go
+    out: ../gen/go/lucidnet/v1
+    opt: paths=source_relative
+  - local: protoc-gen-go-grpc
+    out: ../gen/go/lucidnet/v1
+    opt:
+      - paths=source_relative
+      - require_unimplemented_servers=false
